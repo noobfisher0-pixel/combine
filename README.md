@@ -1,6 +1,31 @@
 # combine
 
-米国型の大型コンバインハーベスター（普通型・単一アキシャルロータ機）を、Three.js でブラウザ上に3D再現するプロジェクトです。現在は**設計段階**です。
+米国型の大型コンバインハーベスター（普通型・単一アキシャルロータ機）を、Three.js でブラウザ上に3D再現するプロジェクトです。現在は **M0（spec・自動検査・ブロックアウト）まで完了**しています。
+
+## 動かし方
+
+Node.js 22 で確認しています。
+
+```sh
+npm install          # .npmrc で legacy-peer-deps を有効にしています
+npm run dev          # ブロックアウトを http://localhost:5173 で表示
+npm test             # spec の干渉・外形・不変条件の自動検査（Vitest）
+npm run test:e2e     # ブラウザでの表示確認（Playwright）
+npm run build        # 型チェック＋本番ビルド（dist/）
+```
+
+寸法を変えるときは `src/spec/spec.ts` を直し、`npm test` で干渉がないことを確かめます。意図的に接している部品の組は `src/model/parts.ts` の `ALLOWED_CONTACTS` に理由つきで書きます。
+
+## ソースの構成
+
+| 場所 | 内容 |
+|---|---|
+| `src/spec/spec.ts` | 寸法・配置の唯一の情報源（設計書 §4.2） |
+| `src/model/` | 部品定義（確度・根拠つき）、運動学、許可リスト |
+| `src/collision/` | 干渉判定（GJK）と姿勢ごとの検査 |
+| `src/view/` | 3D モデルの組み立て、断面表示 |
+| `tests/`、`e2e/` | 自動検査とブラウザでの確認 |
+| `scripts/build-artifact.mjs` | ビルド結果を 1 ファイルのページにまとめる |
 
 ## ドキュメント
 
@@ -8,7 +33,7 @@
 |---|---|
 | [docs/design.md](docs/design.md) | 設計書（座標系・全体配置・パーツ階層・動き・作物フロー・表示モード・コード構成・マイルストーン） |
 | [docs/review.md](docs/review.md) | 設計レビューの指摘と対応状況 |
-| [docs/layout-check.py](docs/layout-check.py) | 主要な隙間・寸法の検算スクリプト（`python3 docs/layout-check.py`） |
+| [docs/layout-check.py](docs/layout-check.py) | v0.2 時点の隙間・寸法の検算（記録。現在は `tests/` が正） |
 | [docs/research/01-header-feeder.md](docs/research/01-header-feeder.md) | 資料：刈取部（ドレーパー／コーンヘッド）とフィーダハウス |
 | [docs/research/02-threshing-cleaning.md](docs/research/02-threshing-cleaning.md) | 資料：脱穀・分離（ロータ）と選別（シュー・ファン） |
 | [docs/research/03-grain-residue.md](docs/research/03-grain-residue.md) | 資料：穀粒搬送・グレインタンク・排出オーガ・残渣処理 |

@@ -1,4 +1,6 @@
-"""design.md v0.2 §4.2 の主要な隙間・寸法を確認する計算（review.md 付録）。
+"""design.md v0.2 §4.2 の主要な隙間・寸法を確認した計算（review.md 付録の記録）。
+
+v0.3 以降は src/spec/spec.ts と tests/ の自動検査が正。この計算は v0.2 時点の値のまま残している。
 
 座標系: +X 前、+Y 上、+Z 右、単位 m。実装後は tests/collision.test.ts に置き換える。
 実行: python3 docs/layout-check.py

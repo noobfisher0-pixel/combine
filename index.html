@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>コンバイン3D ブロックアウト</title>
+<style>
+/* 作業場の暗い背景に 3D ビューを全面表示し、左上に題名、左下に検査結果、右に操作パネルを置く単一テーマ（暗）の画面。 */
+:root{
+  --bg:#1A2120; --panel:rgba(20,27,26,.88); --ink:#E4EAE8; --muted:#9AA8A4; --line:#33413E;
+  --accent:#5CB3AD; --ok:#7CC38F; --bad:#F0806B;
+  --f-ui:"Hiragino Sans","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --f-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hidden}
+#app{position:fixed;inset:0}
+#app canvas{display:block;width:100%;height:100%;touch-action:none}
+.hud{position:fixed;left:12px;max-width:min(380px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;backdrop-filter:blur(4px)}
+.title{top:calc(12px + env(safe-area-inset-top,0px))}
+.title h1{margin:0;font-size:15px;font-weight:700;letter-spacing:.02em}
+.title p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.title .axes{font:11px/1.5 var(--f-mono);color:var(--muted);margin-top:4px}
+.status{bottom:calc(12px + env(safe-area-inset-bottom,0px));max-height:45vh;overflow:auto}
+.status h2{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em}
+.badge{display:inline-block;font:600 12px/1.4 var(--f-mono);padding:1px 8px;border-radius:3px;border:1px solid currentColor}
+.badge.ok{color:var(--ok)} .badge.bad{color:var(--bad)}
+.status ul{margin:6px 0 0;padding-left:1.2em;font-size:12px}
+.status li{color:var(--bad)}
+.status .note{color:var(--muted);font-size:11.5px;margin:6px 0 0}
+.info{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.info dl{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;margin:4px 0 0;font-size:12px}
+.info dt{color:var(--muted)} .info dd{margin:0;font-family:var(--f-mono);overflow-wrap:anywhere}
+.info .name{font-weight:700;font-size:14px}
+.conf{font:600 11px/1.4 var(--f-mono);padding:0 6px;border-radius:3px;border:1px solid currentColor}
+.conf.source{color:var(--ok)} .conf.estimate{color:#E0AE4E} .conf.design{color:var(--accent)}
+.lil-gui.root{--background-color:#141b1a;--widget-color:#2a3533;--hover-color:#33413e;--focus-color:#3c4a47;--number-color:#5cb3ad;--string-color:#e0ae4e;--font-family:var(--f-ui);--title-background-color:#0f1514;top:calc(8px + env(safe-area-inset-top,0px))!important}
+@media (max-width:640px){.status{max-height:30vh}.lil-gui.root{max-height:45vh}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<section class="hud title">
+  <h1>コンバイン3D ブロックアウト（M0）</h1>
+  <p>設計書 v0.2 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。</p>
+  <div class="axes">+X 前 / +Y 上 / +Z 右 · 1 目盛 = 1 m · 原点 = 前車軸直下の地面</div>
+</section>
+<section class="hud status" aria-live="polite">
+  <h2>干渉検査（現在の姿勢）</h2>
+  <div id="check"></div>
+  <p class="note">許可リスト以外の重なりと、隙間 5 cm 未満を干渉として赤く表示します。全姿勢のスイープは自動テスト（tests/collision.test.ts）で実施しています。</p>
+  <div class="info" id="info" hidden></div>
+</section>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
