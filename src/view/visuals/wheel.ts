@@ -9,6 +9,18 @@ import { VisualBuilder, v3 } from './builder';
  */
 export function wheelVisual(part: PartDef, vb: VisualBuilder) {
   if (part.shape.kind !== 'cyl') throw new Error(part.id);
+  const front = part.id.startsWith('wheel.front');
+  const w0 = front ? spec.wheels.front : spec.wheels.rear;
+  const a0 = v3(part.shape.a);
+  const b0 = v3(part.shape.b);
+  vb.rig(
+    { kind: 'spin', key: front ? 'wheelFront' : 'wheelRear', origin: a0.clone().lerp(b0, 0.5), axis: b0.clone().sub(a0).normalize(), pitch: (2 * Math.PI) / w0.lugs },
+    (r) => wheelBody(part, r),
+  );
+}
+
+function wheelBody(part: PartDef, vb: VisualBuilder) {
+  if (part.shape.kind !== 'cyl') throw new Error(part.id);
   const w = part.id.startsWith('wheel.front') ? spec.wheels.front : spec.wheels.rear;
   const a = v3(part.shape.a);
   const b = v3(part.shape.b);

@@ -29,6 +29,16 @@ export function alongMatrix(a: Vector3, b: Vector3): Matrix4 {
 
 export const v3 = (p: Vec3 | readonly number[]) => new Vector3(p[0], p[1], p[2]);
 
+/** 動きの種類（design §6.2）。速さは key で MotionRates から引く。 */
+export type RateKey = 'wheelFront' | 'wheelRear' | 'reel' | 'screen' | 'knife' | 'shoe' | 'draperSide' | 'draperCenter';
+export type RigSpec =
+  /** origin を通る axis 回りの回転。pitch = 見た目が繰り返す角度（ストロボ判定用） */
+  | { kind: 'spin'; key: RateKey; origin: Vector3; axis: Vector3; pitch: number }
+  /** dir 方向の正弦往復 */
+  | { kind: 'oscillate'; key: RateKey; dir: Vector3; amplitude: number; phase: number; pitch: number }
+  /** dir 方向へ流れ、pitch ごとに同じ見た目に戻る（ベルトのスラット） */
+  | { kind: 'scroll'; key: RateKey; dir: Vector3; pitch: number };
+
 /**
  * 部品の見た目を組み立てる。形は既定姿勢のワールド座標で置き、最後に材質ごとに結合する。
  * closed = 閉じた立体（断面キャップのステンシル対象）。
@@ -36,6 +46,23 @@ export const v3 = (p: Vec3 | readonly number[]) => new Vector3(p[0], p[1], p[2])
 export class VisualBuilder {
   private buckets = new Map<string, BufferGeometry[]>();
   private instanced: Array<{ geo: BufferGeometry; mat: MaterialKey; matrices: Matrix4[] }> = [];
+  private rigs: Array<{ spec: RigSpec; body: VisualBuilder; blur?: VisualBuilder }> = [];
+
+  /**
+   * 動く部分。fn で組み立てた形が RigSpec に従って動く。blur は高速時（ストロボになるとき）に代わりに出す形。
+   * 形は既定姿勢・動きの 0 位置のワールド座標で書く。
+   */
+  rig(spec: RigSpec, fn: (vb: VisualBuilder) => void, blur?: (vb: VisualBuilder) => void): this {
+    const body = new VisualBuilder();
+    fn(body);
+    let b: VisualBuilder | undefined;
+    if (blur) {
+      b = new VisualBuilder();
+      blur(b);
+    }
+    this.rigs.push({ spec, body, blur: b });
+    return this;
+  }
 
   add(geo: BufferGeometry, mat: MaterialKey, matrix?: Matrix4, closed = true): this {
     let g = geo.index ? geo.toNonIndexed() : geo.clone();
@@ -128,6 +155,24 @@ export class VisualBuilder {
       im.userData = { partId, closed: false, visual: true };
       im.name = `${partId}:${mat}:instanced`;
       g.add(im);
+    }
+    for (const r of this.rigs) {
+      const origin = r.spec.kind === 'spin' ? r.spec.origin : new Vector3();
+      const outer = new Group();
+      outer.name = `rig:${partId}:${r.spec.key}`;
+      outer.position.copy(origin);
+      const inner = r.body.build(lib, partId);
+      inner.position.copy(origin).negate();
+      outer.add(inner);
+      outer.userData.anim = r.spec;
+      g.add(outer);
+      if (r.blur) {
+        const bg = r.blur.build(lib, partId);
+        bg.visible = false;
+        bg.name = `blur:${partId}:${r.spec.key}`;
+        outer.userData.blur = bg;
+        g.add(bg);
+      }
     }
     return g;
   }

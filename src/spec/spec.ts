@@ -51,17 +51,17 @@ export const spec = {
   header: {
     width: 12.19, // 40 ft
     backplate: { x: [3.2, 3.38], y: [0.1, 1.2] },
-    deck: { x: [3.38, 5.18], y: [0.1, 0.3] },
+    deck: { x: [3.38, 5.18], y: [0.1, 0.24] }, // W-2：短い作物にリールを届かせるため 0.30 → 0.24
     cutterbar: { x: [5.18, 5.4], y: [0.1, 0.18] },
     endShield: { x: [3.38, 5.18], y: [0.3, 0.95], t: 0.03 },
     divider: { x: [5.18, 5.6], y: [0.15, 0.45], z: [6.02, 6.095] as const },
     reelArm: { pivot: [3.32, 1.25] as const, t: 0.06, z: [5.95, 6.01] as const },
-    reel: { x: 5.1, y: 1.05, radius: 0.535, halfLength: 5.9, liftRange: [-0.15, 0.4] as const, slideRange: [-0.3, 0.3] as const },
+    reel: { x: 5.1, y: 1.05, radius: 0.535, halfLength: 5.9, liftRange: [-0.22, 0.4] as const, slideRange: [-0.3, 0.3] as const },
   },
   thresher: {
     rotor: { front: [0.4, 1.85] as const, length: 3.1, slopeDeg: 3, tipRadius: 0.38, coreRadius: 0.325 },
     impellerLength: 0.5,
-    cage: { innerRadius: 0.4, outerRadius: 0.45, grateThickness: 0.05 },
+    cage: { innerRadius: 0.4, outerRadius: 0.45, grateThickness: 0.05, wrapDeg: 150 },
     concave: { x: [-0.1, -1.1] as const },
     strawPathRadius: 0.36,
     beater: { x: -3.0, y: 1.95, radius: 0.225, halfWidth: 0.65 },
@@ -108,6 +108,36 @@ export const spec = {
     chopper: { x: -3.65, y: 1.4, radius: 0.275, halfWidth: 0.65 },
     chaffSpreader: { x: -3.1, y: 0.9, z: 0.35, radius: 0.3, t: 0.03 },
     strawSpreader: { x: -4.95, y: 0.85, z: 0.45, radius: 0.4, t: 0.03 },
+  },
+  /** 作物（docs/research/05-wheat.md の推奨値）。米国の冬小麦・春小麦 */
+  crop: {
+    wheat: {
+      height: 0.8, // 地面から穂先（芒を除く）
+      heightRange: [0.56, 1.09] as const,
+      headLength: 0.09,
+      awnLength: 0.06,
+      headsPerM2: 600,
+      rowSpacing: 0.19,
+      yield: 4.5, // t/ha（良好な圃場）。全米平均 3.6、高収量 8 以上
+      yieldRange: [3.5, 10] as const,
+      testWeight: 772, // kg/m³（60 lb/bu）
+      mogRatio: 0.9, // コンバインに入る MOG / 穀粒（刈高さで 0.64〜1.20）
+      mogRange: [0.64, 1.2] as const,
+      stubbleRange: [0.1, 0.36] as const, // 推奨の刈高さ（m）
+    },
+  },
+  /**
+   * 段ごとの処理能力（docs/research/06-capacity.md。多くは PAMI の実測からの逆算で「推定」）。
+   * 面積は spec の形から計算する（src/model/harvest.ts）。
+   */
+  capacity: {
+    machineTotal: { nominal: 72, range: [65, 80] as const }, // t/h（穀粒＋MOG、損失 1%、Class 8）
+    rotorLoad: { nominal: 10.5, range: [9, 12] as const }, // kg/s/m²（分離グレート面積あたり、穀粒＋MOG）
+    shoeGrainLoad: { nominal: 2.55, range: [2.3, 2.8] as const }, // kg/s/m²（ふるい面積あたり、穀粒）
+    feederPerWidth: 87, // t/h/m（下限の実証値）
+    elevator: 135, // t/h（穀粒）
+    spreadWidth: 15.2, // m（わら。籾殻は 6 m 程度の例もある）
+    unloadToFillMax: 0.2, // 排出時間 / 満杯までの時間 の上限（D）
   },
   limits: {
     clearance: 0.05,

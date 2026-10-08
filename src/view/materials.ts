@@ -28,7 +28,8 @@ export const DEFAULT_LIVERY: Livery = {
   hazard: 0xe8b23a,
 };
 
-export type MaterialKey = keyof Livery;
+/** blur = 高速で動く部品のブラー表示（半透明） */
+export type MaterialKey = keyof Livery | 'blur';
 
 /** 外装の共通材質。X線・断面の切り替えはこの材質に対して行う。 */
 export class MaterialLib {
@@ -55,6 +56,7 @@ export class MaterialLib {
       }),
       lamp: new MeshStandardMaterial({ color: l.lamp, emissive: new Color(l.lamp), emissiveIntensity: 0.6, roughness: 0.2 }),
       hazard: paint(l.hazard),
+      blur: new MeshStandardMaterial({ color: l.steel, roughness: 0.6, transparent: true, opacity: 0.28, depthWrite: false }),
     };
     for (const [k, m] of Object.entries(this.mats)) m.name = `mat:${k}`;
   }

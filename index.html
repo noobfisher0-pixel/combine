@@ -22,6 +22,23 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 .title h1{margin:0;font-size:15px;font-weight:700;letter-spacing:.02em}
 .title p{margin:2px 0 0;color:var(--muted);font-size:12px}
 .title .axes{font:11px/1.5 var(--f-mono);color:var(--muted);margin-top:4px}
+.readout{margin-top:6px;padding-top:6px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.readout b{color:var(--ink);font-weight:600}
+.readout .warn{color:#E0AE4E}
+.harvest{left:auto;right:272px;bottom:calc(12px + env(safe-area-inset-bottom,0px));width:min(360px,calc(100vw - 24px));max-height:calc(60vh - 24px);overflow:auto}
+@media (max-width:1100px){.harvest{right:12px;bottom:auto;top:calc(52vh + env(safe-area-inset-top,0px));max-height:calc(48vh - 24px)}}
+.harvest summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em}
+.harvest ul{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px;font-size:12px}
+.harvest li{display:grid;grid-template-columns:auto 1fr;gap:2px 8px}
+.harvest .mark{font:700 12px/1.4 var(--f-mono)}
+.harvest .ok{color:var(--ok)} .harvest .ng{color:var(--bad)}
+.harvest .detail{grid-column:2;color:var(--muted)}
+.harvest table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px;font-variant-numeric:tabular-nums}
+.harvest td{padding:2px 4px;border-top:1px solid var(--line);vertical-align:middle}
+.harvest .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:60px}
+.harvest .bar i{display:block;height:100%;background:var(--accent)}
+.harvest .bar i.over{background:var(--bad)}
+.harvest .sum{margin-top:6px;font-size:12px}
 .status{bottom:calc(12px + env(safe-area-inset-bottom,0px));max-height:45vh;overflow:auto}
 .status h2{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em}
 .badge{display:inline-block;font:600 12px/1.4 var(--f-mono);padding:1px 8px;border-radius:3px;border:1px solid currentColor}
@@ -35,22 +52,29 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 .info .name{font-weight:700;font-size:14px}
 .conf{font:600 11px/1.4 var(--f-mono);padding:0 6px;border-radius:3px;border:1px solid currentColor}
 .conf.source{color:var(--ok)} .conf.estimate{color:#E0AE4E} .conf.design{color:var(--accent)}
-.lil-gui.root{--background-color:#141b1a;--widget-color:#2a3533;--hover-color:#33413e;--focus-color:#3c4a47;--number-color:#5cb3ad;--string-color:#e0ae4e;--font-family:var(--f-ui);--title-background-color:#0f1514;top:calc(8px + env(safe-area-inset-top,0px))!important}
-@media (max-width:640px){.status{max-height:30vh}.lil-gui.root{max-height:45vh}}
+.lil-gui.root{--background-color:#141b1a;--widget-color:#2a3533;--hover-color:#33413e;--focus-color:#3c4a47;--number-color:#5cb3ad;--string-color:#e0ae4e;--font-family:var(--f-ui);--title-background-color:#0f1514;top:calc(8px + env(safe-area-inset-top,0px))!important;max-height:calc(52vh - 8px);overflow-y:auto}
+@media (max-width:640px){.status{max-height:30vh}.harvest{bottom:auto;top:calc(150px + env(safe-area-inset-top,0px));max-height:30vh}.lil-gui.root{max-height:45vh}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <section class="hud title">
-  <h1>コンバイン3D（M1 外観）</h1>
-  <p>設計書 v0.4 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。内部機構は検査用ブロックのまま（M3 で作り込み）。</p>
+  <h1>コンバイン3D（M2 動き）</h1>
+  <p>設計書 v0.5 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。内部機構は検査用ブロックのまま（M3 で作り込み）。</p>
   <div class="axes">+X 前 / +Y 上 / +Z 右 · 1 目盛 = 1 m · 原点 = 前車軸直下の地面</div>
+  <div class="readout" id="readout" aria-live="off"></div>
 </section>
 <section class="hud status" aria-live="polite">
   <h2>干渉検査（現在の姿勢）</h2>
   <div id="check"></div>
   <p class="note">許可リスト以外の重なりと、隙間 5 cm 未満を干渉として赤く表示します。全姿勢のスイープは自動テスト（tests/collision.test.ts）で実施しています。</p>
   <div class="info" id="info" hidden></div>
+</section>
+<section class="hud harvest" aria-live="polite">
+  <details open>
+    <summary>収穫の成立チェック（小麦）</summary>
+    <div id="harvest"></div>
+  </details>
 </section>
 <script type="module" src="/src/main.ts"></script>
 </body>

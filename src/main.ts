@@ -24,7 +24,12 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { checkPose, type Violation } from './collision/check';
 import { DEFAULT_POSE, HEADER_MOUNTS, poseRanges, TRANSPORT_POSE, UNLOAD_POSE, WORK_POSE } from './model/kinematics';
 import { buildParts } from './model/parts';
+import { spec } from './spec/spec';
 import type { Pose } from './model/types';
+import { approachPose, DEFAULT_MACHINE, LIMITS, motionRates } from './model/machine';
+import { minHeaderAngle } from './model/limits';
+import { defaultConditions, harvestReport, suggestedReelLift, type HarvestReport } from './model/harvest';
+import { Animator } from './view/animator';
 import { MaterialLib } from './view/materials';
 import { buildModel, GROUP_NAMES } from './view/scene';
 import { SectionView } from './view/section';
@@ -81,8 +86,12 @@ const xrayMaterials = new Set<MeshStandardMaterial>([
   ...lib.all.filter((m) => !m.transparent),
 ]);
 
-const pose: Pose = { ...WORK_POSE };
-const view = { mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
+/** pose = 実際の姿勢、target = 操作の目標（油圧で速度制限つきで近づく） */
+let pose: Pose = { ...WORK_POSE };
+const target: Pose = { ...WORK_POSE };
+const machine = { ...DEFAULT_MACHINE };
+const animator = new Animator(model.root, model.proxies);
+const view = { paused: false, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
 
 // ---------- camera presets ----------
 const presets: Record<string, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -151,6 +160,43 @@ function update() {
   runCheck();
 }
 
+// ---------- ground limit ----------
+let headerMin = poseRanges().headerAngle[0];
+/** 目標の姿勢を、ヘッダが地面に潜らない範囲に収める（§14.3、M2）。 */
+function clampTarget() {
+  headerMin = minHeaderAngle(target);
+  if (target.headerAngle < headerMin) target.headerAngle = headerMin;
+}
+
+// ---------- harvest checks (design §16 段階 1) ----------
+const crop = { ...defaultConditions(), autoMog: true, mog: spec.crop.wheat.mogRatio };
+const harvestEl = document.getElementById('harvest')!;
+let report: HarvestReport | null = null;
+function renderHarvest() {
+  report = harvestReport(pose, {
+    yield: crop.yield,
+    cropHeight: crop.cropHeight,
+    speed: machine.engineOn ? machine.groundSpeed : 0,
+    reelIndex: machine.reelIndex,
+    mogRatio: crop.autoMog ? undefined : crop.mog,
+  });
+  const r = report;
+  const checks = r.checks
+    .map((c) => `<li><span class="mark ${c.ok ? 'ok' : 'ng'}">${c.ok ? '✓' : '✗'} ${c.id}</span><span>${c.name}</span><span class="detail">${c.detail}</span></li>`)
+    .join('');
+  const v = Math.max(machine.groundSpeed, 0.01);
+  const rows = r.stages
+    .map((st) => {
+      const ratio = st.load / st.capacity;
+      return `<tr><td>${st.name}</td><td>${(ratio * 100).toFixed(0)}%</td><td><div class="bar" title="${st.basis}"><i class="${ratio > 1 ? 'over' : ''}" style="width:${Math.min(100, ratio * 100)}%"></i></div></td><td>${st.limitSpeed.toFixed(1)} km/h</td></tr>`;
+    })
+    .join('');
+  harvestEl.innerHTML =
+    `<ul>${checks}</ul>` +
+    `<table aria-label="段ごとの負荷率"><tr><td colspan="4" style="border-top:0;color:var(--muted)">段ごとの負荷率（地速 ${v.toFixed(1)} km/h）と、能力いっぱいになる地速</td></tr>${rows}</table>` +
+    `<div class="sum">刈高さ <b>${(r.cut * 100).toFixed(0)} cm</b> · 最大速度 <b>${r.maxSpeed.toFixed(1)} km/h</b>（${r.bottleneck.name}）· タンク満杯 <b>${r.fillMinutes.toFixed(0)} 分</b></div>`;
+}
+
 // ---------- picking ----------
 const infoEl = document.getElementById('info')!;
 const CONF = { source: '資料', estimate: '推定', design: '設計で決定' } as const;
@@ -204,9 +250,36 @@ function showInfo(id: string | null) {
 // ---------- GUI ----------
 const ranges = poseRanges();
 const gui = new GUI({ title: '操作' });
-const fPose = gui.addFolder('姿勢');
+const fRun = gui.addFolder('運転');
+fRun.add(machine, 'engineOn').name('エンジン');
+fRun.add(machine, 'headerOn').name('ヘッダ（刈取部）');
+fRun.add(machine, 'separatorOn').name('脱穀・選別部');
+fRun.add(machine, 'groundSpeed', LIMITS.groundSpeed[0], LIMITS.groundSpeed[1], 0.1).name('地速 [km/h]');
+fRun.add(machine, 'reelIndex', LIMITS.reelIndex[0], LIMITS.reelIndex[1], 0.01).name('リール周速比');
+fRun.add(machine, 'timeScale', LIMITS.timeScale[0], LIMITS.timeScale[1], 0.01).name('再生速度（×実時間）');
+fRun.add(view, 'paused').name('一時停止');
+
+const fCrop = gui.addFolder('作物（小麦）');
+fCrop.add(crop, 'yield', spec.crop.wheat.yieldRange[0], spec.crop.wheat.yieldRange[1], 0.1).name('収量 [t/ha]').onChange(renderHarvest);
+fCrop.add(crop, 'cropHeight', spec.crop.wheat.heightRange[0], spec.crop.wheat.heightRange[1], 0.01).name('草丈 [m]').onChange(renderHarvest);
+fCrop.add(crop, 'autoMog').name('MOG 比を刈高さから推定').onChange(renderHarvest);
+fCrop.add(crop, 'mog', spec.crop.wheat.mogRange[0], spec.crop.wheat.mogRange[1], 0.01).name('MOG/穀粒').onChange(renderHarvest);
+const cropActions = {
+  リールを推奨位置へ: () => setPose({ ...target, reelLift: suggestedReelLift(pose, { ...crop, speed: machine.groundSpeed, reelIndex: machine.reelIndex }) }),
+  最大速度に合わせる: () => {
+    machine.groundSpeed = Math.floor((report?.maxSpeed ?? machine.groundSpeed) * 10) / 10;
+    gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  },
+};
+fCrop.add(cropActions, 'リールを推奨位置へ');
+fCrop.add(cropActions, '最大速度に合わせる');
+
+const fPose = gui.addFolder('姿勢（目標）');
 const ctl = (key: keyof Pose, label: string, step: number) =>
-  fPose.add(pose, key, ranges[key][0], ranges[key][1], step).name(label).onChange(update);
+  fPose.add(target, key, ranges[key][0], ranges[key][1], step).name(label).onChange(() => {
+    clampTarget();
+    poseCtls.forEach((c) => c.updateDisplay());
+  });
 const poseCtls = [
   ctl('headerAngle', 'フィーダ角 [°]', 0.1),
   ctl('faceTilt', 'フェース前後チルト [°]', 0.5),
@@ -224,10 +297,15 @@ const presetsPose = {
   最大上昇: () => setPose({ ...WORK_POSE, headerAngle: ranges.headerAngle[1], reelLift: ranges.reelLift[1] }),
   既定: () => setPose(DEFAULT_POSE),
 };
-function setPose(p: Pose) {
-  Object.assign(pose, p);
+/** immediate = true なら油圧の動きを待たずにその姿勢にする（テスト用）。 */
+function setPose(p: Pose, immediate = false) {
+  Object.assign(target, p);
+  clampTarget();
+  if (immediate) {
+    pose = { ...target };
+    update();
+  }
   poseCtls.forEach((c) => c.updateDisplay());
-  update();
 }
 const fPre = gui.addFolder('姿勢プリセット');
 for (const k of Object.keys(presetsPose) as Array<keyof typeof presetsPose>) fPre.add(presetsPose, k);
@@ -240,6 +318,7 @@ fView.add(view, 'grid').name('1 m グリッド').onChange(applyView);
 const cams = Object.fromEntries(Object.keys(presets).map((k) => [k, () => setCamera(k as keyof typeof presets)]));
 const fCam = gui.addFolder('カメラ');
 for (const k of Object.keys(cams)) fCam.add(cams, k);
+for (const f of [fPre, fView, fCam, fPose]) f.close();
 if (window.innerWidth < 640) gui.close();
 
 // ---------- loop ----------
@@ -249,9 +328,57 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// ---------- readout ----------
+const readoutEl = document.getElementById('readout')!;
+const KEY_NAMES: Record<string, string> = { knife: 'ナイフ', reel: 'リール', wheelFront: '前輪', wheelRear: '後輪', screen: 'スクリーン', draperSide: 'ドレーパー', draperCenter: '中央ベルト', shoe: 'シュー' };
+function renderReadout(rates: ReturnType<typeof motionRates>) {
+  const rpm = (w: number) => Math.abs((w * 60) / (2 * Math.PI)).toFixed(0);
+  const blur = [...animator.blurred].map((k) => KEY_NAMES[k]).join('、');
+  const limited = target.headerAngle <= headerMin + 1e-6 && headerMin > poseRanges().headerAngle[0] + 1e-6;
+  readoutEl.innerHTML =
+    `<div>再生 <b>${machine.timeScale === 1 ? '実時間' : `実時間の ${machine.timeScale.toFixed(2)} 倍`}</b>${view.paused ? '（一時停止）' : ''} · 油圧は実時間</div>` +
+    `<div>実機の値：地速 <b>${machine.engineOn ? machine.groundSpeed.toFixed(1) : '0.0'} km/h</b> · リール <b>${rates.reelRpm.toFixed(0)} rpm</b> · 前輪 <b>${rpm(rates.wheelFrontOmegaZ)} rpm</b> · ナイフ <b>${rates.knifeHz} Hz</b> · シュー <b>${rates.shoeHz} Hz</b></div>` +
+    (blur ? `<div>速すぎて見えない動きはブラー表示：${blur}</div>` : '') +
+    (limited ? `<div class="warn">フィーダ角は地面で制限中（下限 ${headerMin.toFixed(1)}°）</div>` : '');
+}
+
+// ---------- loop ----------
 update();
 applyView();
-renderer.setAnimationLoop(() => {
+let last = performance.now();
+let lastCheck = 0;
+let lastReadout = 0;
+let groundDist = 0;
+let frames = 0;
+renderer.setAnimationLoop((now) => {
+  frames++;
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  // 油圧（実時間）
+  const next = approachPose(pose, target, dt);
+  const moved = (Object.keys(next) as Array<keyof Pose>).some((k) => next[k] !== pose[k]);
+  if (moved) {
+    pose = next;
+    model.setPose(pose);
+    if (now - lastCheck > 150) {
+      lastCheck = now;
+      runCheck();
+    }
+  } else if (lastCheck !== -1 && now - lastCheck > 150) {
+    lastCheck = -1; // 止まったら最終姿勢で 1 回検査
+    runCheck();
+  }
+  // 工程（再生倍率つき）
+  const rates = motionRates(machine);
+  const ts = view.paused ? 0 : machine.timeScale;
+  animator.update(dt, ts, rates);
+  groundDist = (groundDist + rates.ground * dt * ts) % 1;
+  grid.position.x = -groundDist;
+  if (now - lastReadout > 250) {
+    lastReadout = now;
+    renderReadout(rates);
+    renderHarvest();
+  }
   controls.update();
   renderer.render(scene, camera);
 });
@@ -261,6 +388,12 @@ renderer.setAnimationLoop(() => {
   get violations() { return violations; },
   setMode(m: typeof view.mode) { setMode(m); gui.controllersRecursive().forEach((c) => c.updateDisplay()); },
   setCamera,
-  setPose,
+  setPose: (p: Pose) => setPose(p, true),
+  setMachine: (m: Partial<typeof machine>) => Object.assign(machine, m),
+  get animatedCount() { return animator.count; },
+  get frames() { return frames; },
+  get harvest() { return report; },
+  get blurred() { return [...animator.blurred]; },
+  phaseOf: (k: Parameters<typeof animator.phaseOf>[0]) => animator.phaseOf(k),
   info: () => renderer.info.render,
 };

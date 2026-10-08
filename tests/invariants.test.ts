@@ -3,6 +3,7 @@ import { Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { mountMatrices, poseRanges, WORK_POSE } from '../src/model/kinematics';
 import { unloadElbow } from '../src/model/parts';
+import { tankCapacity } from '../src/model/harvest';
 import { spec } from '../src/spec/spec';
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -41,19 +42,9 @@ describe('脱穀・選別', () => {
 
 describe('グレインタンク', () => {
   it('容量（延長展開・平ら）が定格 14.1 m³ ± 5%（R-12）', () => {
-    const tk = spec.tank;
-    const L = Math.abs(tk.x[0] - tk.x[1]);
-    const W = tk.halfWidth * 2;
-    const H = tk.y[1] - tk.y[0];
-    const vCut = ((W - tk.vBottom.troughWidth) / 2) * tk.vBottom.depth * L; // V 底で削れる体積
-    const body = W * L * H - vCut;
-    const f = tk.flap;
-    const lean = f.height * Math.cos(deg(f.openDeg - 90)) ; // 縦方向の高さ
-    const flare = f.height * Math.sin(deg(f.openDeg - 90)); // 外へ開くぶん
-    const ext = L * W * lean + 2 * (L + W) * lean * flare / 2;
-    const total = body + ext;
-    expect(total).toBeGreaterThan(tk.ratedCapacity * 0.95);
-    expect(total).toBeLessThan(tk.ratedCapacity * 1.05);
+    const total = tankCapacity();
+    expect(total).toBeGreaterThan(spec.tank.ratedCapacity * 0.95);
+    expect(total).toBeLessThan(spec.tank.ratedCapacity * 1.05);
   });
 });
 

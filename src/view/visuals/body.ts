@@ -121,6 +121,16 @@ export function exhaustVisual(part: PartDef, vb: VisualBuilder) {
 
 export function screenVisual(part: PartDef, vb: VisualBuilder) {
   if (part.shape.kind !== 'cyl') throw new Error(part.id);
+  const a0 = v3(part.shape.a);
+  const b0 = v3(part.shape.b);
+  vb.rig(
+    { kind: 'spin', key: 'screen', origin: a0.clone().lerp(b0, 0.5), axis: b0.clone().sub(a0).normalize(), pitch: (2 * Math.PI) / 12 },
+    (r) => screenBody(part, r),
+  );
+}
+
+function screenBody(part: PartDef, vb: VisualBuilder) {
+  if (part.shape.kind !== 'cyl') throw new Error(part.id);
   const a = v3(part.shape.a);
   const b = v3(part.shape.b);
   const r = part.shape.radius;

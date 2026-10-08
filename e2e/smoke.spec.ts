@@ -5,6 +5,12 @@ type Api = {
   setMode(m: '外観' | 'X線' | '断面'): void;
   info(): { calls: number; triangles: number };
   setCamera(name: string): void;
+  setMachine(m: Record<string, unknown>): void;
+  animatedCount: number;
+  blurred: string[];
+  phaseOf(k: string): number | undefined;
+  frames: number;
+  harvest: { maxSpeed: number; checks: Array<{ id: string; ok: boolean }> } | null;
 };
 
 test('ブロックアウトが表示され、作業姿勢で干渉 0 件', async ({ page }) => {
@@ -30,3 +36,47 @@ test('ブロックアウトが表示され、作業姿勢で干渉 0 件', async
   await page.screenshot({ path: 'test-results/side-left.png' });
   expect(errors).toEqual([]);
 });
+
+test('動き：運転中は各部が動き、ヘッダを止めるとリールとナイフが止まる', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  // ヘッドレスのソフトウェア描画は 1 フレームが遅いので、時間ではなくフレーム数で待つ
+  const waitFrames = async (n: number) => {
+    const f0 = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.frames);
+    await page.waitForFunction((f) => (window as unknown as { __combine: Api }).__combine.frames >= f, f0 + n, { timeout: 60_000 });
+  };
+  const phases = () => page.evaluate(() => {
+    const a = (window as unknown as { __combine: Api }).__combine;
+    return { reel: a.phaseOf('reel')!, knife: a.phaseOf('knife')!, wheel: a.phaseOf('wheelFront')!, slat: a.phaseOf('draperSide')! };
+  });
+  expect(await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.animatedCount)).toBeGreaterThan(5);
+  const p0 = await phases();
+  await waitFrames(3);
+  const p1 = await phases();
+  expect(p1.reel).not.toBe(p0.reel);
+  expect(p1.knife).not.toBe(p0.knife);
+  expect(p1.wheel).not.toBe(p0.wheel);
+  expect(p1.slat).not.toBe(p0.slat);
+  await expect(page.locator('#readout')).toContainText('リール');
+  await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.setMachine({ headerOn: false }));
+  await waitFrames(2);
+  const p2 = await phases();
+  await waitFrames(3);
+  const p3 = await phases();
+  expect(p3.reel).toBe(p2.reel);
+  expect(p3.knife).toBe(p2.knife);
+  expect(p3.wheel).not.toBe(p2.wheel); // 走行は続く
+  await page.screenshot({ path: 'test-results/motion.png' });
+  expect(errors).toEqual([]);
+});
+
+test('収穫の成立チェックのパネルが表示され、W-1〜W-6 が並ぶ', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#harvest li')).toHaveCount(6, { timeout: 60_000 });
+  const h = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.harvest);
+  expect(h!.maxSpeed).toBeGreaterThan(0);
+  await page.screenshot({ path: 'test-results/harvest.png' });
+});
+

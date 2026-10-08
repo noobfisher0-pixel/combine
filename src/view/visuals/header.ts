@@ -25,25 +25,27 @@ export function headerDeckVisual(_part: PartDef, vb: VisualBuilder) {
   const [x0, x1] = h.deck.x;
   const [y0, y1] = h.deck.y;
   const hw = h.width / 2;
-  vb.boxRange([x0, x1], [y0, y0 + 0.1], [-hw, hw], 'frame');
-  const yb = y0 + 0.1;
-  const beltTop = yb + 0.05;
+  vb.boxRange([x0, x1], [y0, y0 + 0.07], [-hw, hw], 'frame');
+  const yb = y0 + 0.07;
+  const beltTop = yb + 0.045;
   // 左右のベルト（中央 ±1.0 から端まで）、中央ベルト
   for (const s of [-1, 1]) vb.boxRange([x0 + 0.08, x1 - 0.05], [yb, beltTop], [s * 1.02, s * (hw - 0.08)], 'rubber');
   vb.boxRange([x0 + 0.02, x1 - 0.4], [yb, beltTop], [-0.98, 0.98], 'rubber');
-  // 白いスラット（左右ベルトは z 方向に流れるので x 方向の線、中央ベルトは x 方向に流れるので z 方向の線）
+  // 白いスラット。左右のベルトは中央へ（z 方向）、中央ベルトは後方へ（−x 方向）流れる
   const slat = new BoxGeometry(x1 - x0 - 0.2, 0.012, 0.035);
-  const mats: Matrix4[] = [];
+  const sidePitch = 0.33;
   for (const s of [-1, 1]) {
-    for (let z = 1.2; z < hw - 0.15; z += 0.33) mats.push(new Matrix4().makeTranslation((x0 + x1) / 2 + 0.015, beltTop + 0.006, s * z));
+    const mats: Matrix4[] = [];
+    for (let z = 1.02 + sidePitch + 0.01; z < hw - 0.15; z += sidePitch) mats.push(new Matrix4().makeTranslation((x0 + x1) / 2 + 0.015, beltTop + 0.006, s * z));
+    vb.rig({ kind: 'scroll', key: 'draperSide', dir: new Vector3(0, 0, -s), pitch: sidePitch }, (r) => r.instances(slat, 'accent', mats));
   }
-  vb.instances(slat, 'accent', mats);
   const cslat = new BoxGeometry(0.035, 0.012, 1.9);
+  const centerPitch = 0.3;
   const cm: Matrix4[] = [];
-  for (let x = x0 + 0.15; x < x1 - 0.45; x += 0.3) cm.push(new Matrix4().makeTranslation(x, beltTop + 0.006, 0));
-  vb.instances(cslat, 'accent', cm);
+  for (let x = x0 + 0.15 + centerPitch; x < x1 - 0.45; x += centerPitch) cm.push(new Matrix4().makeTranslation(x, beltTop + 0.006, 0));
+  vb.rig({ kind: 'scroll', key: 'draperCenter', dir: new Vector3(-1, 0, 0), pitch: centerPitch }, (r) => r.instances(cslat, 'accent', cm));
   // デッキの上面の縁（ベルトの前の板）
-  vb.boxRange([x1 - 0.05, x1], [yb, y1 - 0.08], [-hw, hw], 'frame');
+  vb.boxRange([x1 - 0.05, x1], [y0 + 0.04, y1 - 0.03], [-hw, hw], 'frame');
 }
 
 /** カッターバー：バーとナイフガード（76 mm ピッチ）。 */
@@ -61,6 +63,23 @@ export function cutterbarVisual(_part: PartDef, vb: VisualBuilder) {
     mats.push(new Matrix4().makeTranslation(x0 + 0.1 + (x1 - x0 - 0.1) / 2, y0 + 0.03, z).multiply(new Matrix4().makeScale(1, 0.7, 1)));
   }
   vb.instances(guard, 'steel', mats);
+
+  // ナイフ（左右 2 本、逆位相）。ガードの上を z 方向に ±38 mm 往復する
+  const amp = 0.038;
+  const section = new CylinderGeometry(0.0, 0.034, 0.12, 3);
+  section.rotateZ(-Math.PI / 2);
+  section.scale(1, 0.15, 1);
+  const kx = x1 - 0.07;
+  const ky = y0 + 0.052;
+  for (const side of [-1, 1] as const) {
+    const ks: Matrix4[] = [];
+    for (let z = 0.06; z < hw - 0.05 - amp; z += pitch) ks.push(new Matrix4().makeTranslation(kx, ky, side * z));
+    vb.rig(
+      { kind: 'oscillate', key: 'knife', dir: new Vector3(0, 0, 1), amplitude: amp, phase: side > 0 ? Math.PI : 0, pitch },
+      (r) => r.instances(section, 'steel', ks),
+      (r) => r.box([kx, ky, side * (hw / 2)], [0.12, 0.008, hw - 0.12], 'blur', 0, false),
+    );
+  }
 }
 
 export function endShieldVisual(part: PartDef, vb: VisualBuilder) {
@@ -91,6 +110,23 @@ export function reelArmVisual(part: PartDef, vb: VisualBuilder) {
 
 /** リール：中心パイプ・スパイダ・バット 6 本・タイン（インスタンス）。 */
 export function reelVisual(part: PartDef, vb: VisualBuilder) {
+  if (part.shape.kind !== 'cyl') throw new Error(part.id);
+  const a = v3(part.shape.a);
+  const b = v3(part.shape.b);
+  const R = part.shape.radius;
+  const center = new Vector3(h.reel.x, h.reel.y, 0);
+  vb.rig(
+    { kind: 'spin', key: 'reel', origin: center, axis: b.clone().sub(a).normalize(), pitch: (2 * Math.PI) / 6 },
+    (r) => reelBody(part, r),
+    (r) => {
+      r.cylinder(a, b, 0.06, 'frame', 20);
+      r.cylinder(a.clone().setZ(a.z + 0.01), b.clone().setZ(b.z - 0.01), R - 0.01, 'blur', 32);
+    },
+  );
+}
+
+/** リール：中心パイプ・スパイダ・バット 6 本・タイン（インスタンス）。 */
+function reelBody(part: PartDef, vb: VisualBuilder) {
   if (part.shape.kind !== 'cyl') throw new Error(part.id);
   const a = v3(part.shape.a);
   const b = v3(part.shape.b);
