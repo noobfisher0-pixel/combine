@@ -9,8 +9,8 @@
 
 export const spec = {
   wheels: {
-    front: { x: 0, y: 1.025, track: 3.04, radius: 1.025, width: 0.9 }, // 900/60R38
-    rear: { x: -3.75, y: 0.82, track: 3.04, radius: 0.82, width: 0.75 }, // 750/65R26
+    front: { x: 0, y: 1.025, track: 3.04, radius: 1.025, width: 0.9, rimRadius: 0.483, lugs: 23 }, // 900/60R38
+    rear: { x: -3.75, y: 0.82, track: 3.04, radius: 0.82, width: 0.75, rimRadius: 0.33, lugs: 19 }, // 750/65R26
     steerMax: 32,
   },
   axles: {
@@ -23,6 +23,7 @@ export const spec = {
     lowerPanel: { x: [0.95, -2.85], y: [0.45, 2.55], z: 1.01, t: 0.02 },
     rearPanel: { x: [-2.85, -5.4], y: [1.1, 2.5], z: 0.73, t: 0.02 },
     enginePanel: { x: [-3.66, -5.4], y: [2.58, 3.62], z: 1.46, t: 0.02 },
+    engineHood: { x: [-3.66, -5.4], y: [3.62, 3.7], halfWidth: 1.47 },
   },
   cab: {
     x: [-0.45, 1.55], y: [2.4, 3.9], halfWidth: 0.94,
@@ -52,7 +53,10 @@ export const spec = {
     backplate: { x: [3.2, 3.38], y: [0.1, 1.2] },
     deck: { x: [3.38, 5.18], y: [0.1, 0.3] },
     cutterbar: { x: [5.18, 5.4], y: [0.1, 0.18] },
-    reel: { x: 5.1, y: 1.05, radius: 0.535, halfLength: 6.0, liftRange: [-0.15, 0.4] as const, slideRange: [-0.3, 0.3] as const },
+    endShield: { x: [3.38, 5.18], y: [0.3, 0.95], t: 0.03 },
+    divider: { x: [5.18, 5.6], y: [0.15, 0.45], z: [6.02, 6.095] as const },
+    reelArm: { pivot: [3.32, 1.25] as const, t: 0.06, z: [5.95, 6.01] as const },
+    reel: { x: 5.1, y: 1.05, radius: 0.535, halfLength: 5.9, liftRange: [-0.15, 0.4] as const, slideRange: [-0.3, 0.3] as const },
   },
   thresher: {
     rotor: { front: [0.4, 1.85] as const, length: 3.1, slopeDeg: 3, tipRadius: 0.38, coreRadius: 0.325 },
@@ -98,7 +102,7 @@ export const spec = {
     center: [-4.3, 3.1, 0] as const,
     size: [1.2, 1.0, 1.6] as const,
     exhaust: { x: -4.7, z: 0.7, top: 3.98, radius: 0.075 },
-    rotaryScreen: { x: -4.3, y: 3.1, radius: 0.5, z: 1.47, t: 0.04 },
+    rotaryScreen: { x: -4.3, y: 3.05, radius: 0.5, z: 1.47, t: 0.04 },
   },
   residue: {
     chopper: { x: -3.65, y: 1.4, radius: 0.275, halfWidth: 0.65 },

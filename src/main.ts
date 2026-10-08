@@ -8,6 +8,7 @@ import {
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
+  type Object3D,
   PerspectiveCamera,
   PlaneGeometry,
   PMREMGenerator,
@@ -24,6 +25,7 @@ import { checkPose, type Violation } from './collision/check';
 import { DEFAULT_POSE, HEADER_MOUNTS, poseRanges, TRANSPORT_POSE, UNLOAD_POSE, WORK_POSE } from './model/kinematics';
 import { buildParts } from './model/parts';
 import type { Pose } from './model/types';
+import { MaterialLib } from './view/materials';
 import { buildModel, GROUP_NAMES } from './view/scene';
 import { SectionView } from './view/section';
 
@@ -61,15 +63,26 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 // ---------- model ----------
-const model = buildModel(parts);
+const lib = new MaterialLib();
+const model = buildModel(parts, lib);
 scene.add(model.root);
 
-const exteriorMeshes = [...model.meshes.values()].filter((m) => byId.get(m.userData.partId)!.layer === 'exterior');
-const section = new SectionView(exteriorMeshes);
+// 外装：ブロック（外装の部品）と見た目（M1 では見た目はすべて外装）
+const exteriorProxies = [...model.proxies.values()].filter((m) => byId.get(m.userData.partId)!.layer === 'exterior');
+const visualMeshes: Mesh[] = [];
+for (const g of model.visuals.values()) g.traverse((o) => { if (o instanceof Mesh) visualMeshes.push(o); });
+const section = new SectionView(
+  [...exteriorProxies, ...visualMeshes.filter((m) => m.userData.closed)],
+  visualMeshes.filter((m) => !m.userData.closed),
+);
 section.attachCapTo(scene);
+const xrayMaterials = new Set<MeshStandardMaterial>([
+  ...exteriorProxies.map((m) => m.material),
+  ...lib.all.filter((m) => !m.transparent),
+]);
 
 const pose: Pose = { ...WORK_POSE };
-const view = { mode: '外観' as '外観' | 'X線' | '断面', header: true, grid: true };
+const view = { mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
 
 // ---------- camera presets ----------
 const presets: Record<string, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -89,25 +102,25 @@ setCamera('斜め前');
 
 // ---------- view modes ----------
 function applyView() {
-  for (const m of exteriorMeshes) {
-    const mat = m.material;
-    const xray = view.mode === 'X線';
+  const xray = view.mode === 'X線';
+  for (const mat of xrayMaterials) {
     mat.alphaHash = xray;
     mat.opacity = xray ? 0.22 : 1;
     mat.needsUpdate = true;
   }
-  section.setEnabled(view.mode === '断面');
+  model.setDetail(view.shape === '詳細');
   // 断面では、完全に右側（z > 0）にある部品は視界を遮るので隠す（R-15）
   const box = new Box3();
-  for (const m of model.meshes.values()) {
-    const part = byId.get(m.userData.partId)!;
+  for (const [id, proxy] of model.proxies) {
+    const part = byId.get(id)!;
     let visible = view.header || !HEADER_MOUNTS.has(part.mount);
     if (view.mode === '断面') {
-      box.setFromObject(m);
+      box.setFromObject(proxy);
       if (box.min.z > 0) visible = false;
     }
-    m.visible = visible;
+    model.setPartVisible(id, visible);
   }
+  section.setEnabled(view.mode === '断面');
   grid.visible = view.grid;
 }
 
@@ -122,11 +135,7 @@ const checkEl = document.getElementById('check')!;
 let violations: Violation[] = [];
 function runCheck() {
   violations = checkPose(parts, pose, { skip: (p) => !view.header && HEADER_MOUNTS.has(p.mount) });
-  const bad = new Set(violations.flatMap((v) => [v.a, v.b]));
-  for (const [id, m] of model.meshes) {
-    m.material.emissive.setHex(bad.has(id) ? 0xb3261e : 0x000000);
-    m.material.emissiveIntensity = bad.has(id) ? 0.9 : 0;
-  }
+  model.highlight(new Set(violations.flatMap((v) => [v.a, v.b])));
   if (violations.length === 0) {
     checkEl.innerHTML = `<span class="badge ok">干渉 0 件</span> <span style="color:var(--muted)">${parts.length} 部品・${(parts.length * (parts.length - 1)) / 2} 組を検査</span>`;
   } else {
@@ -154,10 +163,17 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hits = ray.intersectObjects([...model.meshes.values()].filter((m) => m.visible), false);
+  const hits = ray.intersectObject(model.root, true).filter((h) => isDrawn(h.object));
   const hit = hits.find((h) => !(view.mode === '断面' && section.plane.distanceToPoint(h.point) < 0));
   showInfo(hit ? (hit.object.userData.partId as string) : null);
 });
+
+/** 実際に描かれているか（祖先がすべて表示、材質も表示）。 */
+function isDrawn(o: Object3D): boolean {
+  if (!(o as Mesh).material || !((o as Mesh).material as MeshStandardMaterial).visible) return false;
+  for (let p: Object3D | null = o; p; p = p.parent) if (!p.visible) return false;
+  return true;
+}
 
 function showInfo(id: string | null) {
   if (!id) {
@@ -165,7 +181,7 @@ function showInfo(id: string | null) {
     return;
   }
   const p = byId.get(id)!;
-  const b = new Box3().setFromObject(model.meshes.get(id)!);
+  const b = new Box3().setFromObject(model.proxies.get(id)!);
   const size = b.getSize(new Vector3());
   const f = (n: number) => n.toFixed(2);
   const related = violations.filter((v) => v.a === id || v.b === id);
@@ -218,6 +234,7 @@ for (const k of Object.keys(presetsPose) as Array<keyof typeof presetsPose>) fPr
 
 const fView = gui.addFolder('表示');
 fView.add(view, 'mode', ['外観', 'X線', '断面']).name('モード').onChange(() => setMode(view.mode));
+fView.add(view, 'shape', ['詳細', '検査用ブロック']).name('形状').onChange(applyView);
 fView.add(view, 'header').name('ヘッダを表示').onChange(() => { applyView(); runCheck(); });
 fView.add(view, 'grid').name('1 m グリッド').onChange(applyView);
 const cams = Object.fromEntries(Object.keys(presets).map((k) => [k, () => setCamera(k as keyof typeof presets)]));

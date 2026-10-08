@@ -3,6 +3,7 @@ import {
   CylinderGeometry,
   Group,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Quaternion,
   Vector3,
@@ -10,8 +11,11 @@ import {
 } from 'three';
 import { mountMatrices } from '../model/kinematics';
 import type { Group as PartGroup, MountId, PartDef, Pose } from '../model/types';
+import { spec } from '../spec/spec';
+import type { MaterialLib } from './materials';
+import { buildVisual } from './visuals';
 
-/** 部品群ごとの色（既定の配色：ティール＋オフホワイト＋ダークグレー、design §1.3）。 */
+/** 検査用ブロックの色（部品群ごと）。 */
 export const GROUP_COLORS: Record<PartGroup, number> = {
   wheel: 0x2b2e31,
   chassis: 0xecead4,
@@ -52,13 +56,24 @@ function placeCylinder(mesh: Object3D, a: Vector3, b: Vector3, radius: number) {
   mesh.scale.set(radius, len, radius);
 }
 
+export type ProxyMesh = Mesh<BoxGeometry | CylinderGeometry, MeshStandardMaterial>;
+
 export interface CombineModel {
   root: Group;
-  meshes: Map<string, Mesh<BoxGeometry | CylinderGeometry, MeshStandardMaterial>>;
+  /** 検査用ブロック（collider と同じ形） */
+  proxies: Map<string, ProxyMesh>;
+  /** 見た目（M1 では外装のみ） */
+  visuals: Map<string, Group>;
   setPose(pose: Pose): void;
+  /** true = 詳細表示（見た目がある部品は見た目、ない部品はブロック） */
+  setDetail(on: boolean): void;
+  /** 干渉している部品をブロックの赤い半透明で重ねて示す */
+  highlight(ids: Set<string>): void;
+  /** 部品ごとの表示可否（ヘッダ非表示・断面の右側非表示など） */
+  setPartVisible(id: string, on: boolean): void;
 }
 
-export function buildModel(parts: PartDef[]): CombineModel {
+export function buildModel(parts: PartDef[], lib: MaterialLib): CombineModel {
   const root = new Group();
   root.name = 'Combine';
   const mounts = new Map<MountId, Group>();
@@ -74,10 +89,14 @@ export function buildModel(parts: PartDef[]): CombineModel {
     return g;
   };
 
-  // 円柱は単位円柱をスケールして使う（リンクの伸縮もスケールで表す）
   const unitCyl = new CylinderGeometry(1, 1, 1, 40, 1);
-  const meshes: CombineModel['meshes'] = new Map();
-  const links: Array<{ mesh: Mesh; part: PartDef }> = [];
+  const proxies: CombineModel['proxies'] = new Map();
+  const visuals: CombineModel['visuals'] = new Map();
+  const links: Array<{ part: PartDef; proxy: Mesh; barrel: Mesh; rod: Mesh }> = [];
+  const hiMat = new MeshBasicMaterial({ color: 0xff3b2f, transparent: true, opacity: 0.45, depthWrite: false });
+  const highlights = new Map<string, Mesh>();
+  const partVisible = new Map<string, boolean>();
+  let detail = true;
 
   for (const part of parts) {
     const mat = new MeshStandardMaterial({
@@ -91,24 +110,59 @@ export function buildModel(parts: PartDef[]): CombineModel {
       mat.opacity = 0.3;
     }
     const sh = part.shape;
-    let mesh: Mesh<BoxGeometry | CylinderGeometry, MeshStandardMaterial>;
+    let proxy: ProxyMesh;
+    let parent: Object3D;
     if (sh.kind === 'box') {
-      mesh = new Mesh(new BoxGeometry(...sh.size), mat);
-      mesh.position.set(...sh.center);
-      mesh.rotation.z = ((sh.rotZ ?? 0) * Math.PI) / 180;
-      mountGroup(part.mount).add(mesh);
+      proxy = new Mesh(new BoxGeometry(...sh.size), mat);
+      proxy.position.set(...sh.center);
+      proxy.rotation.z = ((sh.rotZ ?? 0) * Math.PI) / 180;
+      parent = mountGroup(part.mount);
     } else if (sh.kind === 'cyl') {
-      mesh = new Mesh(unitCyl, mat);
-      placeCylinder(mesh, new Vector3(...sh.a), new Vector3(...sh.b), sh.radius);
-      mountGroup(part.mount).add(mesh);
+      proxy = new Mesh(unitCyl, mat);
+      placeCylinder(proxy, new Vector3(...sh.a), new Vector3(...sh.b), sh.radius);
+      parent = mountGroup(part.mount);
     } else {
-      mesh = new Mesh(unitCyl, mat);
-      root.add(mesh);
-      links.push({ mesh, part });
+      proxy = new Mesh(unitCyl, mat);
+      parent = root;
+      const barrel = new Mesh(unitCyl, lib.mats.frame);
+      const rod = new Mesh(unitCyl, lib.mats.steel);
+      for (const m of [barrel, rod]) {
+        m.userData = { partId: part.id, visual: true, closed: false };
+        root.add(m);
+      }
+      links.push({ part, proxy, barrel, rod });
     }
-    mesh.name = part.id;
-    mesh.userData.partId = part.id;
-    meshes.set(part.id, mesh);
+    proxy.name = part.id;
+    proxy.userData = { partId: part.id, proxy: true, closed: true };
+    parent.add(proxy);
+    proxies.set(part.id, proxy);
+
+    const hi = new Mesh(proxy.geometry, hiMat);
+    hi.visible = false;
+    hi.renderOrder = 3;
+    hi.raycast = () => {};
+    proxy.add(hi);
+    highlights.set(part.id, hi);
+
+    const vis = buildVisual(part, lib);
+    if (vis) {
+      mountGroup(part.mount).add(vis);
+      visuals.set(part.id, vis);
+    }
+  }
+
+  function refresh() {
+    for (const [id, proxy] of proxies) {
+      const on = partVisible.get(id) ?? true;
+      const vis = visuals.get(id);
+      const link = links.find((l) => l.part.id === id);
+      const showVisual = detail && (vis !== undefined || link !== undefined);
+      proxy.visible = on;
+      // ブロックを隠しても子のハイライトは出したいので、材質だけ消す
+      proxy.material.visible = on && !showVisual;
+      if (vis) vis.visible = on && showVisual;
+      if (link) link.barrel.visible = link.rod.visible = on && showVisual;
+    }
   }
 
   function setPose(pose: Pose) {
@@ -117,15 +171,38 @@ export function buildModel(parts: PartDef[]): CombineModel {
       g.matrix.copy(m[id]);
       g.matrixWorldNeedsUpdate = true;
     }
-    for (const { mesh, part } of links) {
+    for (const { part, proxy, barrel, rod } of links) {
       const sh = part.shape;
       if (sh.kind !== 'link') continue;
       const a = new Vector3(...sh.a.p).applyMatrix4(m[sh.a.mount]);
       const b = new Vector3(...sh.b.p).applyMatrix4(m[sh.b.mount]);
-      placeCylinder(mesh, a, b, sh.radius);
+      placeCylinder(proxy, a, b, sh.radius);
+      // 筒（最短長からロッドの露出ぶんを引いた長さ）とロッド
+      const dir = b.clone().sub(a).normalize();
+      const barrelLen = spec.feeder.liftCylinder.closedLength - 0.12;
+      const mid = a.clone().addScaledVector(dir, barrelLen);
+      placeCylinder(barrel, a, mid, sh.radius);
+      placeCylinder(rod, mid.clone().addScaledVector(dir, -0.05), b, sh.radius * 0.55);
     }
     root.updateMatrixWorld(true);
   }
 
-  return { root, meshes, setPose };
+  refresh();
+  return {
+    root,
+    proxies,
+    visuals,
+    setPose,
+    setDetail(on) {
+      detail = on;
+      refresh();
+    },
+    highlight(ids) {
+      for (const [id, hi] of highlights) hi.visible = ids.has(id);
+    },
+    setPartVisible(id, on) {
+      partVisible.set(id, on);
+      refresh();
+    },
+  };
 }

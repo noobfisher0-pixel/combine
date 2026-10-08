@@ -1,6 +1,6 @@
 # combine
 
-米国型の大型コンバインハーベスター（普通型・単一アキシャルロータ機）を、Three.js でブラウザ上に3D再現するプロジェクトです。現在は **M0（spec・自動検査・ブロックアウト）まで完了**しています。
+米国型の大型コンバインハーベスター（普通型・単一アキシャルロータ機）を、Three.js でブラウザ上に3D再現するプロジェクトです。現在は **M1（外観の作り込み）まで完了**しています。
 
 ## 動かし方
 
@@ -8,7 +8,7 @@ Node.js 22 で確認しています。
 
 ```sh
 npm install          # .npmrc で legacy-peer-deps を有効にしています
-npm run dev          # ブロックアウトを http://localhost:5173 で表示
+npm run dev          # 3D モデルを http://localhost:5173 で表示
 npm test             # spec の干渉・外形・不変条件の自動検査（Vitest）
 npm run test:e2e     # ブラウザでの表示確認（Playwright）
 npm run build        # 型チェック＋本番ビルド（dist/）
@@ -23,7 +23,8 @@ npm run build        # 型チェック＋本番ビルド（dist/）
 | `src/spec/spec.ts` | 寸法・配置の唯一の情報源（設計書 §4.2） |
 | `src/model/` | 部品定義（確度・根拠つき）、運動学、許可リスト |
 | `src/collision/` | 干渉判定（GJK）と姿勢ごとの検査 |
-| `src/view/` | 3D モデルの組み立て、断面表示 |
+| `src/view/` | 3D モデルの組み立て、材質、断面表示 |
+| `src/view/visuals/` | 部品ごとの見た目（検査用の形の内側に収める） |
 | `tests/`、`e2e/` | 自動検査とブラウザでの確認 |
 | `scripts/build-artifact.mjs` | ビルド結果を 1 ファイルのページにまとめる |
 

@@ -79,6 +79,9 @@ export function buildParts(s: Spec = spec): PartDef[] {
       boxRange(p3.x, p3.y, [side * (p3.z - p3.t / 2), side * (p3.z + p3.t / 2)]), D, 'design §4.2(e)');
   }
 
+  add('panel.engineHood', 'エンジンフード', 'chassis', 'exterior', 'body',
+    boxRange(b.engineHood.x, b.engineHood.y, [-b.engineHood.halfWidth, b.engineHood.halfWidth]), D, 'M1 外観');
+
   // ---------- キャブ ----------
   const c = s.cab;
   add('cab', 'キャブ', 'cab', 'exterior', 'body', boxRange(c.x, c.y, [-c.halfWidth, c.halfWidth]), D, 'R-03 床 2.40');
@@ -122,6 +125,24 @@ export function buildParts(s: Spec = spec): PartDef[] {
   add('header.back', 'ヘッダ背板', 'header', 'exterior', 'header', boxRange(h.backplate.x, h.backplate.y, hz), E, '01 §1 幅 40 ft');
   add('header.deck', 'ドレーパーデッキ', 'header', 'exterior', 'header', boxRange(h.deck.x, h.deck.y, hz), E, '01 §1');
   add('header.cutterbar', 'カッターバー', 'header', 'exterior', 'header', boxRange(h.cutterbar.x, h.cutterbar.y, hz), S, '01 §1');
+  for (const side of [-1, 1] as const) {
+    const L = side < 0 ? 'L' : 'R';
+    const J = side < 0 ? '左' : '右';
+    const es = h.endShield;
+    const zo = h.width / 2;
+    add(`header.end${L}`, `エンドシールド（${J}）`, 'header', 'exterior', 'header',
+      boxRange(es.x, es.y, [side * (zo - es.t), side * zo]), E, '01 §7');
+    add(`header.divider${L}`, `デバイダ（${J}）`, 'header', 'exterior', 'header',
+      boxRange(h.divider.x, h.divider.y, [side * h.divider.z[0], side * h.divider.z[1]]), E, '01 §6 先端は黒');
+    const ra = h.reelArm;
+    const len = Math.hypot(h.reel.x - ra.pivot[0], h.reel.y - ra.pivot[1]);
+    add(`header.reelArm${L}`, `リールアーム（${J}）`, 'header', 'exterior', 'reel', {
+      kind: 'box',
+      center: [(ra.pivot[0] + h.reel.x) / 2, (ra.pivot[1] + h.reel.y) / 2, (side * (ra.z[0] + ra.z[1])) / 2],
+      size: [len, ra.t, ra.z[1] - ra.z[0]],
+      rotZ: (Math.atan2(h.reel.y - ra.pivot[1], h.reel.x - ra.pivot[0]) * 180) / Math.PI,
+    }, E, 'M1 外観');
+  }
   add('header.reel', 'リール', 'header', 'exterior', 'reel',
     cyl([h.reel.x, h.reel.y, -h.reel.halfLength], [h.reel.x, h.reel.y, h.reel.halfLength], h.reel.radius), S, '01 §1 φ1.07');
 
@@ -248,4 +269,13 @@ export const ALLOWED_CONTACTS: ReadonlyArray<readonly [string, string, string]> 
   ['shoe.chafferExt', 'shoe.chaffer', 'チャッファの延長'],
   ['engine.exhaust', 'engine', 'エンジン上面から立ち上がる'],
   ['engine.screen', 'panel.engineR', '右側板の開口に取り付け'],
+  ['panel.engineHood', 'panel.engine*', 'フードは側板の上に載る'],
+  ['panel.engineHood', 'engine', 'フードはエンジンの直上'],
+  ['panel.engineHood', 'engine.exhaust', '排気スタックがフードを貫通'],
+  ['header.divider*', 'header.cutterbar', 'デバイダはカッターバー端に取り付け'],
+  ['header.divider*', 'header.deck', 'デバイダはデッキ端に取り付け'],
+  ['header.divider*', 'header.end*', 'デバイダはエンドシールドの先端'],
+  ['header.end*', 'header.deck', 'エンドシールドはデッキ端に立つ'],
+  ['header.end*', 'header.back', 'エンドシールドは背板に接する'],
+  ['header.reelArm*', 'header.back', 'リールアームの根元は背板上端のピボット'],
 ];
