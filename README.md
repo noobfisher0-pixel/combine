@@ -8,6 +8,7 @@
 |---|---|
 | [docs/design.md](docs/design.md) | 設計書（座標系・全体配置・パーツ階層・動き・作物フロー・表示モード・コード構成・マイルストーン） |
 | [docs/review.md](docs/review.md) | 設計レビューの指摘と対応状況 |
+| [docs/layout-check.py](docs/layout-check.py) | 主要な隙間・寸法の検算スクリプト（`python3 docs/layout-check.py`） |
 | [docs/research/01-header-feeder.md](docs/research/01-header-feeder.md) | 資料：刈取部（ドレーパー／コーンヘッド）とフィーダハウス |
 | [docs/research/02-threshing-cleaning.md](docs/research/02-threshing-cleaning.md) | 資料：脱穀・分離（ロータ）と選別（シュー・ファン） |
 | [docs/research/03-grain-residue.md](docs/research/03-grain-residue.md) | 資料：穀粒搬送・グレインタンク・排出オーガ・残渣処理 |
