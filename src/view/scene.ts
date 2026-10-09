@@ -71,6 +71,27 @@ export interface CombineModel {
   highlight(ids: Set<string>): void;
   /** 部品ごとの表示可否（ヘッダ非表示・断面の右側非表示など） */
   setPartVisible(id: string, on: boolean): void;
+  /** 分解表示（0 = 組み立て、1 = 分解） */
+  setExplode(f: number): void;
+}
+
+/** 分解表示で各部品を動かす量 [m]（design §8.1）。部品群ごとに、前・上・横へ離す。 */
+export function explodeOffset(p: PartDef): Vector3 {
+  const side = (id: string) => (id.endsWith('L') ? -1 : id.endsWith('R') ? 1 : 0);
+  const id = p.id;
+  if (p.group === 'header' || p.mount === 'face') return new Vector3(3.2, 0, 0);
+  if (id === 'feeder.housing') return new Vector3(1.6, 0, 0);
+  if (p.group === 'cab') return new Vector3(1.0, 1.8, 0);
+  if (id.startsWith('tank')) return new Vector3(0, 2.8, 0);
+  if (p.group === 'unload') return new Vector3(0, 3.8, -1.2);
+  if (p.group === 'engine' || id.startsWith('panel.engine')) return new Vector3(-1.8, 1.8, 0);
+  if (id.startsWith('panel.lower')) return new Vector3(0, 0, side(id) * 1.8);
+  if (id.startsWith('panel.rear')) return new Vector3(0, 0, side(id) * 1.4);
+  if (p.group === 'wheel') return new Vector3(0, 0, side(id) * 1.3);
+  if (p.group === 'thresher') return new Vector3(0, 1.3, 0);
+  if (id === 'grain.elevator' || id === 'grain.tailingsReturn') return new Vector3(0, 0, 1.2);
+  if (p.group === 'residue') return new Vector3(-1.4, 0, 0);
+  return new Vector3();
 }
 
 export function buildModel(parts: PartDef[], lib: MaterialLib): CombineModel {
@@ -188,6 +209,7 @@ export function buildModel(parts: PartDef[], lib: MaterialLib): CombineModel {
   }
 
   refresh();
+  const proxyBase = new Map([...proxies].map(([id, m]) => [id, m.position.clone()]));
   return {
     root,
     proxies,
@@ -203,6 +225,19 @@ export function buildModel(parts: PartDef[], lib: MaterialLib): CombineModel {
     setPartVisible(id, on) {
       partVisible.set(id, on);
       refresh();
+    },
+    setExplode(f) {
+      for (const part of parts) {
+        if (part.shape.kind === 'link') continue;
+        const off = explodeOffset(part).multiplyScalar(f);
+        const vis = visuals.get(part.id);
+        if (vis) vis.position.copy(off);
+        const proxy = proxies.get(part.id)!;
+        const base = proxyBase.get(part.id)!;
+        proxy.position.copy(base).add(off);
+      }
+      for (const l of links) l.barrel.visible = l.rod.visible = f === 0 && detail;
+      root.updateMatrixWorld(true);
     },
   };
 }

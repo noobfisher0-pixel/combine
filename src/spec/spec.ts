@@ -69,7 +69,9 @@ export const spec = {
   shoe: {
     halfWidth: 0.75,
     oscillationAmplitude: 0.02,
-    pan: { x: [-0.05, -1.1] as const, y: 1.22, t: 0.03 },
+    pan: { x: [-0.05, -0.55] as const, y: 1.22, t: 0.03 },
+    // M3：グレインパンの後半を前段チャッファ（ルーバー）にする。選別面積を参照機（S790 5.9 m²）に近づける
+    frontChaffer: { x: [-0.55, -1.1] as const, y: 1.22, t: 0.03 },
     chaffer: { front: [-0.95, 1.05] as const, length: 1.4, extension: 0.3, slopeDeg: 5, t: 0.03 },
     sieve: { front: [-0.9, 0.85] as const, length: 1.35, slopeDeg: 5, t: 0.03 },
     fan: { x: -0.45, y: 0.62, radius: 0.2, housingRadius: 0.25 },
@@ -106,8 +108,8 @@ export const spec = {
   },
   residue: {
     chopper: { x: -3.65, y: 1.4, radius: 0.275, halfWidth: 0.65 },
-    chaffSpreader: { x: -3.1, y: 0.9, z: 0.35, radius: 0.3, t: 0.03 },
-    strawSpreader: { x: -4.95, y: 0.85, z: 0.45, radius: 0.4, t: 0.03 },
+    chaffSpreader: { x: -3.1, y: 0.9, z: 0.35, radius: 0.3, t: 0.08 }, // M3：羽根の高さぶん厚く
+    strawSpreader: { x: -4.95, y: 0.85, z: 0.45, radius: 0.4, t: 0.12 }, // M3：羽根の高さぶん厚く
   },
   /** 作物（docs/research/05-wheat.md の推奨値）。米国の冬小麦・春小麦 */
   crop: {

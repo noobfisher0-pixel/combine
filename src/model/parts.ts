@@ -160,6 +160,8 @@ export function buildParts(s: Spec = spec): PartDef[] {
   const sh = s.shoe;
   add('shoe.pan', 'グレインパン', 'shoe', 'interior', 'body',
     boxRange(sh.pan.x, [sh.pan.y - sh.pan.t / 2, sh.pan.y + sh.pan.t / 2], [-sh.halfWidth, sh.halfWidth]), D, 'R-14');
+  add('shoe.frontChaffer', '前段チャッファ', 'shoe', 'interior', 'body',
+    boxRange(sh.frontChaffer.x, [sh.frontChaffer.y - sh.frontChaffer.t / 2, sh.frontChaffer.y + sh.frontChaffer.t / 2], [-sh.halfWidth, sh.halfWidth]), E, '02 §3（S790 のフロントチャッファ）、M3');
   const chafferRear = along(sh.chaffer.front, sh.chaffer.length, sh.chaffer.slopeDeg);
   const extRear = along(sh.chaffer.front, sh.chaffer.length + sh.chaffer.extension, sh.chaffer.slopeDeg);
   add('shoe.chaffer', 'チャッファ', 'shoe', 'interior', 'body', slab(sh.chaffer.front, chafferRear, sh.chaffer.t, sh.halfWidth), S, '02 §3 2.5 m²');
@@ -267,6 +269,7 @@ export const ALLOWED_CONTACTS: ReadonlyArray<readonly [string, string, string]> 
   ['grain.elevator', 'panel.lowerR', '右側板に沿って取り付け'],
   ['grain.tailingsReturn', 'panel.lowerR', '右側板に沿って取り付け'],
   ['shoe.chafferExt', 'shoe.chaffer', 'チャッファの延長'],
+  ['shoe.frontChaffer', 'shoe.pan', 'グレインパンの後半'],
   ['engine.exhaust', 'engine', 'エンジン上面から立ち上がる'],
   ['engine.screen', 'panel.engineR', '右側板の開口に取り付け'],
   ['panel.engineHood', 'panel.engine*', 'フードは側板の上に載る'],

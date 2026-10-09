@@ -48,9 +48,30 @@ export interface MotionRates {
   draperCenter: number; // m/s（後方へ）
   /** 地面のスクロール速度（m/s、機体は原点に固定して地面を −X へ流す） */
   ground: number;
+  /** 内部機構：各部品の軸回りの角速度（rad/s、軸の向きと回る向きは見た目の rig で決める） */
+  rotor: number;
+  beater: number;
+  fan: number;
+  chopper: number;
+  spreader: number;
+  auger: number; // クリーングレイン・テーリング・バブルアップ
+  crossAuger: number; // タンク底（排出中だけ）
+  elevator: number; // m/s（パドルチェーン）
 }
 
+/** 小麦での運転値（02 §2・§3、03 §4。回転数は資料の範囲の中から小麦向けの値を選んだ推定） */
+export const INTERNAL_RPM = {
+  rotor: 900, // 210〜1,000 rpm
+  beater: 1200, // 推定（ロータの約 1.3 倍）
+  fan: 1050, // 300〜1,350 rpm
+  chopper: 3000, // 細断時
+  spreader: 500,
+  auger: 400, // 推定
+  elevatorSpeed: 3, // m/s（推定）
+};
+
 const kmh = (v: number) => v / 3.6;
+const rad = (rpm: number) => (rpm * 2 * Math.PI) / 60;
 
 export function reelRpm(groundSpeedKmh: number, index: number, diameter = spec.header.reel.radius * 2): number {
   const rpm = (kmh(groundSpeedKmh) * index * 60) / (Math.PI * diameter);
@@ -75,6 +96,14 @@ export function motionRates(s: MachineState): MotionRates {
     draperSide: header ? Math.max(1.0, Math.min(3.5, 1.5 * v + 0.5)) : 0,
     draperCenter: header ? 3.5 : 0,
     ground: v,
+    rotor: sep ? rad(INTERNAL_RPM.rotor) : 0,
+    beater: sep ? rad(INTERNAL_RPM.beater) : 0,
+    fan: sep ? rad(INTERNAL_RPM.fan) : 0,
+    chopper: sep ? rad(INTERNAL_RPM.chopper) : 0,
+    spreader: sep ? rad(INTERNAL_RPM.spreader) : 0,
+    auger: sep ? rad(INTERNAL_RPM.auger) : 0,
+    crossAuger: on && s.unloadOn ? rad(INTERNAL_RPM.auger) : 0,
+    elevator: sep ? INTERNAL_RPM.elevatorSpeed : 0,
   };
 }
 

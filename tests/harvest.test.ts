@@ -20,7 +20,7 @@ const poseAtCut = (c: number) => ({ ...WORK_POSE, headerAngle: headerAngleForCut
 describe('形から計算する量', () => {
   it('作業姿勢の刈高さは 0.10 m（design §4.2 (b)）', () => expect(cutHeight(WORK_POSE)).toBeCloseTo(0.1, 3));
   it('分離面積は S790（1.54 m²）と同程度', () => expect(separationArea()).toBeGreaterThan(1.4));
-  it('選別面積', () => expect(cleaningArea()).toBeCloseTo(4.575, 2));
+  it('選別面積（前段チャッファを含め 5.4 m²、S790 の 5.9 m² に近い）', () => expect(cleaningArea()).toBeCloseTo(5.4, 2));
   it('タンク容量 14.1 m³ ± 5%', () => expect(Math.abs(tankCapacity() / spec.tank.ratedCapacity - 1)).toBeLessThan(0.05));
   it('MOG/穀粒 は刈高さで下がる（PAMI：10 cm 1.20 → 25 cm 0.85 → 40 cm 0.64）', () => {
     expect(mogFromCut(0.1)).toBeCloseTo(1.2);

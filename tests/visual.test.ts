@@ -54,8 +54,8 @@ function eachVertex(obj: Object3D, fn: (p: Vector3) => void) {
 const withVisual = parts.filter(hasVisual);
 
 describe('見た目の形状', () => {
-  it('外装の部品はすべて見た目を持つ', () => {
-    const missing = parts.filter((p) => p.layer === 'exterior' && !hasVisual(p)).map((p) => p.id);
+  it('すべての部品が見た目を持つ（昇降シリンダは画面側で筒とロッドを作る）', () => {
+    const missing = parts.filter((p) => p.shape.kind !== 'link' && !hasVisual(p)).map((p) => p.id);
     expect(missing).toEqual([]);
   });
 
@@ -88,6 +88,18 @@ describe('主要点が spec と ±0.05 m で一致', () => {
     ['格納オーガ先端', 'unload.tube', (b) => b.max.x, 4.7],
     ['刈刃の前端', 'header.cutterbar', (b) => b.max.x, 5.4],
     ['ヘッダ幅（右端）', 'header.back', (b) => b.max.z, 6.095],
+    // M3：内部（design §4.2 (c)）
+    ['ロータ前端', 'thresher.rotor', (b) => b.max.x, 0.4],
+    ['ロータ後端', 'thresher.rotor', (b) => b.min.x, -2.7],
+    ['ロータ上端（後端で最大）', 'thresher.rotor', (b) => b.max.y, 2.012 + 0.38],
+    ['ケージ下端', 'thresher.cage', (b) => b.min.y, 1.85 - 0.45],
+    ['ビータ中心の高さ', 'thresher.beater', (b) => (b.min.y + b.max.y) / 2, 1.95],
+    ['ファン中心の高さ', 'shoe.fan', (b) => (b.min.y + b.max.y) / 2, 0.62],
+    ['シーブ後端', 'shoe.sieve', (b) => b.min.x, -2.25],
+    ['チャッファ延長部の後端', 'shoe.chafferExt', (b) => b.min.x, -2.65],
+    ['エレベータ上端', 'grain.elevator', (b) => b.max.y, 2.48],
+    ['チョッパ中心の高さ', 'residue.chopper', (b) => (b.min.y + b.max.y) / 2, 1.4],
+    ['エンジン後端', 'engine', (b) => b.min.x, -4.9],
   ];
   for (const [name, id, f, want] of cases) {
     it(`${name}（${id}）≈ ${want} m`, () => expect(Math.abs(f(bounds(id)) - want)).toBeLessThanOrEqual(0.05));

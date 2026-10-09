@@ -42,7 +42,7 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 .status{bottom:calc(12px + env(safe-area-inset-bottom,0px));max-height:45vh;overflow:auto}
 .status h2{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em}
 .badge{display:inline-block;font:600 12px/1.4 var(--f-mono);padding:1px 8px;border-radius:3px;border:1px solid currentColor}
-.badge.ok{color:var(--ok)} .badge.bad{color:var(--bad)}
+.badge.ok{color:var(--ok)} .badge.bad{color:var(--bad)} .badge:not(.ok):not(.bad){color:var(--muted)}
 .status ul{margin:6px 0 0;padding-left:1.2em;font-size:12px}
 .status li{color:var(--bad)}
 .status .note{color:var(--muted);font-size:11.5px;margin:6px 0 0}
@@ -59,8 +59,8 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 <body>
 <div id="app"></div>
 <section class="hud title">
-  <h1>コンバイン3D（M2 動き）</h1>
-  <p>設計書 v0.5 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。内部機構は検査用ブロックのまま（M3 で作り込み）。</p>
+  <h1>コンバイン3D（M3 内部機構）</h1>
+  <p>設計書 v0.6 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。中を見るには「表示」の X線・断面・分解を使ってください。</p>
   <div class="axes">+X 前 / +Y 上 / +Z 右 · 1 目盛 = 1 m · 原点 = 前車軸直下の地面</div>
   <div class="readout" id="readout" aria-live="off"></div>
 </section>

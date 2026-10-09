@@ -44,10 +44,11 @@ export function separationArea(s: Spec = spec): number {
   return (t.cage.wrapDeg / 360) * Math.PI * 2 * t.cage.innerRadius * grateLength;
 }
 
-/** 選別面積（チャッファ＋延長部＋シーブ）[m²] */
+/** 選別面積（前段チャッファ＋チャッファ＋延長部＋シーブ）[m²] */
 export function cleaningArea(s: Spec = spec): number {
   const sh = s.shoe;
-  return (sh.chaffer.length + sh.chaffer.extension + sh.sieve.length) * sh.halfWidth * 2;
+  const front = Math.abs(sh.frontChaffer.x[0] - sh.frontChaffer.x[1]);
+  return (front + sh.chaffer.length + sh.chaffer.extension + sh.sieve.length) * sh.halfWidth * 2;
 }
 
 /** 刈刃（ナイフの線）の高さ [m] */

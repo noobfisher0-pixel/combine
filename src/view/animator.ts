@@ -26,7 +26,7 @@ export class Animator {
       if (spec) this.rigs.push({ obj: o, spec, blur: o.userData.blur, base: o.position.clone(), phase: 0, strobing: false });
     });
     // シュー：上（グレインパン・チャッファ）と下（シーブ）を逆位相で揺らす（ブロック表示、内部の見た目は M3）
-    for (const [id, sign] of [['shoe.pan', 1], ['shoe.chaffer', 1], ['shoe.chafferExt', 1], ['shoe.sieve', -1]] as const) {
+    for (const [id, sign] of [['shoe.pan', 1], ['shoe.frontChaffer', 1], ['shoe.chaffer', 1], ['shoe.chafferExt', 1], ['shoe.sieve', -1]] as const) {
       const mesh = proxies.get(id);
       if (mesh) this.shoe.push({ mesh, base: mesh.position.clone(), sign });
     }
@@ -51,8 +51,9 @@ export class Animator {
       const s = r.spec;
       let step = 0;
       if (s.kind === 'spin') {
-        const omega = new Vector3(0, 0, spinRate(s.key, rates)); // いずれもワールド Z 軸回り（車輪・リール・スクリーン）
-        const w = omega.dot(s.axis);
+        // 車輪・リールはワールド Z 軸回りの角速度、それ以外は部品の軸回りの回転数 × 向き
+        const worldZ = WORLD_Z_KEYS.has(s.key);
+        const w = worldZ ? new Vector3(0, 0, spinRate(s.key, rates)).dot(s.axis) : spinRate(s.key, rates) * (s.sign ?? 1);
         step = w * dt;
         r.phase += step;
         r.obj.quaternion.copy(q.setFromAxisAngle(s.axis, r.phase));
@@ -63,7 +64,7 @@ export class Animator {
         r.obj.position.copy(r.base).addScaledVector(s.dir, x);
         step = 2 * Math.PI * f * s.amplitude * dt; // 1 フレームの最大移動
       } else {
-        const v = s.key === 'draperCenter' ? rates.draperCenter : rates.draperSide;
+        const v = s.key === 'draperCenter' ? rates.draperCenter : s.key === 'elevator' ? rates.elevator : rates.draperSide;
         step = v * dt;
         r.phase = (r.phase + step) % s.pitch;
         r.obj.position.copy(r.base).addScaledVector(s.dir, r.phase);
@@ -85,6 +86,8 @@ export class Animator {
   }
 }
 
+const WORLD_Z_KEYS: ReadonlySet<RateKey> = new Set<RateKey>(['wheelFront', 'wheelRear', 'reel', 'screen']);
+
 function spinRate(key: RateKey, r: MotionRates): number {
   switch (key) {
     case 'wheelFront':
@@ -95,6 +98,20 @@ function spinRate(key: RateKey, r: MotionRates): number {
       return r.reelOmegaZ;
     case 'screen':
       return r.screenOmega;
+    case 'rotor':
+      return r.rotor;
+    case 'beater':
+      return r.beater;
+    case 'fan':
+      return r.fan;
+    case 'chopper':
+      return r.chopper;
+    case 'spreader':
+      return r.spreader;
+    case 'auger':
+      return r.auger;
+    case 'crossAuger':
+      return r.crossAuger;
     default:
       return 0;
   }

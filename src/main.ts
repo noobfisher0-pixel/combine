@@ -76,14 +76,16 @@ scene.add(model.root);
 const exteriorProxies = [...model.proxies.values()].filter((m) => byId.get(m.userData.partId)!.layer === 'exterior');
 const visualMeshes: Mesh[] = [];
 for (const g of model.visuals.values()) g.traverse((o) => { if (o instanceof Mesh) visualMeshes.push(o); });
+// 断面で切るのは外装だけ。内部機構は切らずに見せる（design §8.1）
+const exteriorVisuals = visualMeshes.filter((m) => byId.get(m.userData.partId)!.layer === 'exterior');
 const section = new SectionView(
-  [...exteriorProxies, ...visualMeshes.filter((m) => m.userData.closed)],
-  visualMeshes.filter((m) => !m.userData.closed),
+  [...exteriorProxies, ...exteriorVisuals.filter((m) => m.userData.closed)],
+  exteriorVisuals.filter((m) => !m.userData.closed),
 );
 section.attachCapTo(scene);
 const xrayMaterials = new Set<MeshStandardMaterial>([
   ...exteriorProxies.map((m) => m.material),
-  ...lib.all.filter((m) => !m.transparent),
+  ...lib.exteriorOpaque,
 ]);
 
 /** pose = 実際の姿勢、target = 操作の目標（油圧で速度制限つきで近づく） */
@@ -91,7 +93,7 @@ let pose: Pose = { ...WORK_POSE };
 const target: Pose = { ...WORK_POSE };
 const machine = { ...DEFAULT_MACHINE };
 const animator = new Animator(model.root, model.proxies);
-const view = { paused: false, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
+const view = { paused: false, explode: 0, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
 
 // ---------- camera presets ----------
 const presets: Record<string, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -111,12 +113,17 @@ setCamera('斜め前');
 
 // ---------- view modes ----------
 function applyView() {
+  // X線：外装を薄い半透明にする。ディザ透過（alphaHash）はざらつきで中が読みにくかったので、
+  // 奥行きを書かない半透明にした（外装どうしの前後の並べ替えのちらつきは、薄いので目立たない）
   const xray = view.mode === 'X線';
   for (const mat of xrayMaterials) {
-    mat.alphaHash = xray;
-    mat.opacity = xray ? 0.22 : 1;
+    mat.transparent = xray;
+    mat.depthWrite = !xray;
+    mat.opacity = xray ? 0.12 : 1;
     mat.needsUpdate = true;
   }
+  const harvestDetails = document.querySelector<HTMLDetailsElement>('.harvest details');
+  if (harvestDetails && (view.mode !== '外観' || view.explode > 0)) harvestDetails.open = false;
   model.setDetail(view.shape === '詳細');
   // 断面では、完全に右側（z > 0）にある部品は視界を遮るので隠す（R-15）
   const box = new Box3();
@@ -143,6 +150,12 @@ function setMode(m: typeof view.mode) {
 const checkEl = document.getElementById('check')!;
 let violations: Violation[] = [];
 function runCheck() {
+  if (view.explode > 0) {
+    violations = [];
+    model.highlight(new Set());
+    checkEl.innerHTML = '<span class="badge">分解表示中</span> <span style="color:var(--muted)">組み立てた状態に戻すと検査します</span>';
+    return;
+  }
   violations = checkPose(parts, pose, { skip: (p) => !view.header && HEADER_MOUNTS.has(p.mount) });
   model.highlight(new Set(violations.flatMap((v) => [v.a, v.b])));
   if (violations.length === 0) {
@@ -313,6 +326,7 @@ for (const k of Object.keys(presetsPose) as Array<keyof typeof presetsPose>) fPr
 const fView = gui.addFolder('表示');
 fView.add(view, 'mode', ['外観', 'X線', '断面']).name('モード').onChange(() => setMode(view.mode));
 fView.add(view, 'shape', ['詳細', '検査用ブロック']).name('形状').onChange(applyView);
+fView.add(view, 'explode', 0, 1, 0.01).name('分解').onChange(() => { model.setExplode(view.explode); runCheck(); applyView(); });
 fView.add(view, 'header').name('ヘッダを表示').onChange(() => { applyView(); runCheck(); });
 fView.add(view, 'grid').name('1 m グリッド').onChange(applyView);
 const cams = Object.fromEntries(Object.keys(presets).map((k) => [k, () => setCamera(k as keyof typeof presets)]));
@@ -330,7 +344,7 @@ window.addEventListener('resize', () => {
 
 // ---------- readout ----------
 const readoutEl = document.getElementById('readout')!;
-const KEY_NAMES: Record<string, string> = { knife: 'ナイフ', reel: 'リール', wheelFront: '前輪', wheelRear: '後輪', screen: 'スクリーン', draperSide: 'ドレーパー', draperCenter: '中央ベルト', shoe: 'シュー' };
+const KEY_NAMES: Record<string, string> = { knife: 'ナイフ', reel: 'リール', wheelFront: '前輪', wheelRear: '後輪', screen: 'スクリーン', draperSide: 'ドレーパー', draperCenter: '中央ベルト', shoe: 'シュー', rotor: 'ロータ', beater: 'ビータ', fan: 'ファン', chopper: 'チョッパ', spreader: 'スプレッダ', auger: 'オーガ', crossAuger: 'タンク底オーガ', elevator: 'エレベータ' };
 function renderReadout(rates: ReturnType<typeof motionRates>) {
   const rpm = (w: number) => Math.abs((w * 60) / (2 * Math.PI)).toFixed(0);
   const blur = [...animator.blurred].map((k) => KEY_NAMES[k]).join('、');
@@ -390,6 +404,7 @@ renderer.setAnimationLoop((now) => {
   setCamera,
   setPose: (p: Pose) => setPose(p, true),
   setMachine: (m: Partial<typeof machine>) => Object.assign(machine, m),
+  setExplode: (f: number) => { view.explode = f; model.setExplode(f); runCheck(); applyView(); },
   get animatedCount() { return animator.count; },
   get frames() { return frames; },
   get harvest() { return report; },

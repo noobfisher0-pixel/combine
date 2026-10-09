@@ -1,4 +1,4 @@
-import { Color, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
+import { Color, DoubleSide, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
 
 /**
  * 配色（design §1.3）。実在ブランドの配色は置かない。
@@ -28,8 +28,12 @@ export const DEFAULT_LIVERY: Livery = {
   hazard: 0xe8b23a,
 };
 
-/** blur = 高速で動く部品のブラー表示（半透明） */
-export type MaterialKey = keyof Livery | 'blur';
+/**
+ * blur = 高速で動く部品のブラー表示（半透明）
+ * 内部機構：moving = 回転・往復する部品、grate = コンケーブ・グレート・フレーム、shell = 中が見える半透明の覆い
+ */
+export type MaterialKey = keyof Livery | 'blur' | 'moving' | 'grate' | 'shell';
+export const INTERIOR_MATERIALS: ReadonlySet<MaterialKey> = new Set<MaterialKey>(['moving', 'grate', 'shell']);
 
 /** 外装の共通材質。X線・断面の切り替えはこの材質に対して行う。 */
 export class MaterialLib {
@@ -57,11 +61,22 @@ export class MaterialLib {
       lamp: new MeshStandardMaterial({ color: l.lamp, emissive: new Color(l.lamp), emissiveIntensity: 0.6, roughness: 0.2 }),
       hazard: paint(l.hazard),
       blur: new MeshStandardMaterial({ color: l.steel, roughness: 0.6, transparent: true, opacity: 0.28, depthWrite: false }),
+      moving: new MeshStandardMaterial({ color: 0xd0a03a, roughness: 0.45, metalness: 0.35 }),
+      grate: new MeshStandardMaterial({ color: 0x4a5255, roughness: 0.55, metalness: 0.5 }),
+      // 半透明はディザ透過（alphaHash）にして、前後の並べ替えのちらつきを避ける（R-16）
+      shell: new MeshStandardMaterial({ color: 0x9aa5a8, roughness: 0.5, metalness: 0.3, alphaHash: true, opacity: 0.3, side: DoubleSide }),
     };
     for (const [k, m] of Object.entries(this.mats)) m.name = `mat:${k}`;
   }
 
   get all(): MeshStandardMaterial[] {
     return Object.values(this.mats);
+  }
+
+  /** 外装の不透明な材質（X線で透かす対象） */
+  get exteriorOpaque(): MeshStandardMaterial[] {
+    return (Object.entries(this.mats) as Array<[MaterialKey, MeshStandardMaterial]>)
+      .filter(([k, m]) => !INTERIOR_MATERIALS.has(k) && !m.transparent)
+      .map(([, m]) => m);
   }
 }

@@ -24,12 +24,25 @@ import {
   reelArmVisual,
   reelVisual,
 } from './header';
+import {
+  augerVisual,
+  axleVisual,
+  beaterVisual,
+  cageVisual,
+  chopperVisual,
+  elevatorVisual,
+  engineVisual,
+  fanVisual,
+  rotorVisual,
+  shoeVisual,
+  spreaderVisual,
+} from './interior';
 import { unloadVisual } from './unload';
 import { wheelVisual } from './wheel';
 
 type VisualFn = (part: PartDef, vb: VisualBuilder) => void;
 
-/** 部品 ID（末尾 * は前方一致）→ 見た目の組み立て。M1 は外装のみ。内部機構は M3。 */
+/** 部品 ID（末尾 * は前方一致）→ 見た目の組み立て。外装（M1）と内部機構（M3）。 */
 const VISUALS: Array<[string, VisualFn]> = [
   ['wheel.*', wheelVisual],
   ['panel.*', panelVisual],
@@ -51,6 +64,22 @@ const VISUALS: Array<[string, VisualFn]> = [
   ['header.reel', reelVisual],
   ['engine.exhaust', exhaustVisual],
   ['engine.screen', screenVisual],
+  ['engine', engineVisual],
+  ['axle.*', axleVisual],
+  ['thresher.rotor', rotorVisual],
+  ['thresher.cage', cageVisual],
+  ['thresher.beater', beaterVisual],
+  ['shoe.fan', fanVisual],
+  ['shoe.*', shoeVisual],
+  ['grain.cleanAuger', augerVisual],
+  ['grain.tailingsAuger', augerVisual],
+  ['tank.bubbleUp', augerVisual],
+  ['tank.crossAuger', augerVisual],
+  ['grain.elevator', elevatorVisual],
+  ['grain.tailingsReturn', elevatorVisual],
+  ['residue.chopper', chopperVisual],
+  ['residue.chaff*', spreaderVisual],
+  ['residue.spreader*', spreaderVisual],
 ];
 
 function find(id: string): VisualFn | undefined {

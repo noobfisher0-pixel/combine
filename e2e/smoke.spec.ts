@@ -10,6 +10,7 @@ type Api = {
   blurred: string[];
   phaseOf(k: string): number | undefined;
   frames: number;
+  setExplode(f: number): void;
   harvest: { maxSpeed: number; checks: Array<{ id: string; ok: boolean }> } | null;
 };
 
@@ -78,5 +79,30 @@ test('収穫の成立チェックのパネルが表示され、W-1〜W-6 が並�
   const h = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.harvest);
   expect(h!.maxSpeed).toBeGreaterThan(0);
   await page.screenshot({ path: 'test-results/harvest.png' });
+});
+
+test('内部機構：断面・X線・分解で中が見え、エラーが出ない', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto('/');
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  const api = (fn: string, arg: unknown) => page.evaluate(([f, a]) => ((window as unknown as { __combine: Record<string, (x: unknown) => void> }).__combine[f as string])(a), [fn, arg] as const);
+  await api('setMode', '断面');
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'test-results/m3-section.png' });
+  await api('setMode', 'X線');
+  await api('setCamera', '斜め前');
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'test-results/m3-xray.png' });
+  await api('setMode', '外観');
+  await api('setExplode', 1);
+  await expect(page.locator('#check .badge')).toHaveText('分解表示中');
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'test-results/m3-explode.png' });
+  const info = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.info());
+  expect(info.calls).toBeLessThanOrEqual(400);
+  expect(info.triangles).toBeLessThanOrEqual(300_000);
+  expect(errors).toEqual([]);
 });
 
