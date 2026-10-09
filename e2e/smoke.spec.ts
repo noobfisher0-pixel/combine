@@ -11,6 +11,8 @@ type Api = {
   phaseOf(k: string): number | undefined;
   frames: number;
   setExplode(f: number): void;
+  flow: { count: Record<string, number>; tankMass: number; cutting: boolean };
+  setTankMass(kg: number): void;
   harvest: { maxSpeed: number; checks: Array<{ id: string; ok: boolean }> } | null;
 };
 
@@ -103,6 +105,24 @@ test('内部機構：断面・X線・分解で中が見え、エラーが出な�
   const info = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.info());
   expect(info.calls).toBeLessThanOrEqual(400);
   expect(info.triangles).toBeLessThanOrEqual(300_000);
+  expect(errors).toEqual([]);
+});
+
+test('作物フロー：刈り取り中は粒子が流れ、タンクに穀粒がたまる', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  // 再生を速めて、穀粒がタンクに届くまで待つ（フレーム数で待つ）
+  await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.setMachine({ timeScale: 1 }));
+  await page.waitForFunction(() => (window as unknown as { __combine: Api }).__combine.flow.tankMass > 0, undefined, { timeout: 120_000 });
+  const st = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.flow);
+  expect(st.cutting).toBe(true);
+  for (const k of ['crop', 'straw', 'grain']) expect(st.count[k], k).toBeGreaterThan(0);
+  await expect(page.locator('#readout')).toContainText('タンク');
+  await page.evaluate(() => { const c = (window as unknown as { __combine: Api }).__combine; c.setMachine({ timeScale: 0.1 }); c.setMode('断面'); });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'test-results/m4-flow-section.png' });
   expect(errors).toEqual([]);
 });
 

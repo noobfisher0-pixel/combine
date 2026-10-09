@@ -30,6 +30,8 @@ import { approachPose, DEFAULT_MACHINE, LIMITS, motionRates } from './model/mach
 import { minHeaderAngle } from './model/limits';
 import { defaultConditions, harvestReport, suggestedReelLift, type HarvestReport } from './model/harvest';
 import { Animator } from './view/animator';
+import { FlowSystem } from './flow/system';
+import { FlowView, FLOW_COLORS, FLOW_NAMES } from './view/flowView';
 import { MaterialLib } from './view/materials';
 import { buildModel, GROUP_NAMES } from './view/scene';
 import { SectionView } from './view/section';
@@ -93,7 +95,10 @@ let pose: Pose = { ...WORK_POSE };
 const target: Pose = { ...WORK_POSE };
 const machine = { ...DEFAULT_MACHINE };
 const animator = new Animator(model.root, model.proxies);
-const view = { paused: false, explode: 0, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
+const flow = new FlowSystem(1);
+const flowView = new FlowView(flow);
+scene.add(flowView.root);
+const view = { paused: false, explode: 0, flow: true, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
 
 // ---------- camera presets ----------
 const presets: Record<string, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -267,6 +272,7 @@ const fRun = gui.addFolder('運転');
 fRun.add(machine, 'engineOn').name('エンジン');
 fRun.add(machine, 'headerOn').name('ヘッダ（刈取部）');
 fRun.add(machine, 'separatorOn').name('脱穀・選別部');
+fRun.add(machine, 'unloadOn').name('排出（オーガを 90° 以上振り出す）');
 fRun.add(machine, 'groundSpeed', LIMITS.groundSpeed[0], LIMITS.groundSpeed[1], 0.1).name('地速 [km/h]');
 fRun.add(machine, 'reelIndex', LIMITS.reelIndex[0], LIMITS.reelIndex[1], 0.01).name('リール周速比');
 fRun.add(machine, 'timeScale', LIMITS.timeScale[0], LIMITS.timeScale[1], 0.01).name('再生速度（×実時間）');
@@ -284,6 +290,14 @@ const cropActions = {
     gui.controllersRecursive().forEach((c) => c.updateDisplay());
   },
 };
+const tankActions = {
+  タンクを空に: () => flow.setTankMass(0),
+  タンクをほぼ満杯に: () => flow.setTankMass(flow.tankCapacityMass * 0.95),
+  作物フローをリセット: () => flow.clear(),
+};
+fCrop.add(tankActions, 'タンクを空に');
+fCrop.add(tankActions, 'タンクをほぼ満杯に');
+fCrop.add(tankActions, '作物フローをリセット');
 fCrop.add(cropActions, 'リールを推奨位置へ');
 fCrop.add(cropActions, '最大速度に合わせる');
 
@@ -329,11 +343,26 @@ fView.add(view, 'shape', ['詳細', '検査用ブロック']).name('形状').onC
 fView.add(view, 'explode', 0, 1, 0.01).name('分解').onChange(() => { model.setExplode(view.explode); runCheck(); applyView(); });
 fView.add(view, 'header').name('ヘッダを表示').onChange(() => { applyView(); runCheck(); });
 fView.add(view, 'grid').name('1 m グリッド').onChange(applyView);
+fView.add(view, 'flow').name('作物フロー').onChange(() => { flowView.root.visible = view.flow; });
 const cams = Object.fromEntries(Object.keys(presets).map((k) => [k, () => setCamera(k as keyof typeof presets)]));
 const fCam = gui.addFolder('カメラ');
 for (const k of Object.keys(cams)) fCam.add(cams, k);
 for (const f of [fPre, fView, fCam, fPose]) f.close();
 if (window.innerWidth < 640) gui.close();
+
+function flowReadout(): string {
+  if (!view.flow) return '';
+  const st = flow.stats();
+  const pct = (st.tankMass / st.tankCapacityMass) * 100;
+  const total = Object.values(st.count).reduce((a, b) => a + b, 0);
+  const sw = (f: keyof typeof FLOW_COLORS) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#${FLOW_COLORS[f].toString(16).padStart(6, '0')};margin:0 3px 0 6px"></span>${FLOW_NAMES[f]}`;
+  const unloading = machine.unloadOn && pose.augerDeploy >= 90 && st.tankMass > 0;
+  return (
+    `<div>タンク <b>${pct.toFixed(0)}%</b>（${(st.tankMass / 1000).toFixed(1)} t / ${(st.tankCapacityMass / 1000).toFixed(1)} t）· ` +
+    `${st.cutting ? '刈り取り中' : '刈り取り停止'}${unloading ? ' · <b>排出中</b>' : machine.unloadOn ? ' · 排出は「排出オーガ」を 90° 以上に' : ''}</div>` +
+    `<div>${(['crop', 'straw', 'grain', 'chaff', 'tailings', 'unload'] as const).map(sw).join('')} · 粒子 ${total}（1 粒 ≈ 40 g）</div>`
+  );
+}
 
 // ---------- loop ----------
 window.addEventListener('resize', () => {
@@ -353,7 +382,8 @@ function renderReadout(rates: ReturnType<typeof motionRates>) {
     `<div>再生 <b>${machine.timeScale === 1 ? '実時間' : `実時間の ${machine.timeScale.toFixed(2)} 倍`}</b>${view.paused ? '（一時停止）' : ''} · 油圧は実時間</div>` +
     `<div>実機の値：地速 <b>${machine.engineOn ? machine.groundSpeed.toFixed(1) : '0.0'} km/h</b> · リール <b>${rates.reelRpm.toFixed(0)} rpm</b> · 前輪 <b>${rpm(rates.wheelFrontOmegaZ)} rpm</b> · ナイフ <b>${rates.knifeHz} Hz</b> · シュー <b>${rates.shoeHz} Hz</b></div>` +
     (blur ? `<div>速すぎて見えない動きはブラー表示：${blur}</div>` : '') +
-    (limited ? `<div class="warn">フィーダ角は地面で制限中（下限 ${headerMin.toFixed(1)}°）</div>` : '');
+    (limited ? `<div class="warn">フィーダ角は地面で制限中（下限 ${headerMin.toFixed(1)}°）</div>` : '') +
+    flowReadout();
 }
 
 // ---------- loop ----------
@@ -386,6 +416,24 @@ renderer.setAnimationLoop((now) => {
   const rates = motionRates(machine);
   const ts = view.paused ? 0 : machine.timeScale;
   animator.update(dt, ts, rates);
+  if (view.flow && view.explode === 0) {
+    flow.update(dt * ts, {
+      pose,
+      engineOn: machine.engineOn,
+      headerOn: machine.headerOn,
+      separatorOn: machine.separatorOn,
+      unloadOn: machine.unloadOn,
+      groundSpeed: machine.groundSpeed,
+      yield: crop.yield,
+      cropHeight: crop.cropHeight,
+      mogRatio: crop.autoMog ? undefined : crop.mog,
+      draperSide: rates.draperSide,
+      draperCenter: rates.draperCenter,
+      elevator: rates.elevator,
+    });
+    flowView.sync();
+  }
+  flowView.root.visible = view.flow && view.explode === 0;
   groundDist = (groundDist + rates.ground * dt * ts) % 1;
   grid.position.x = -groundDist;
   if (now - lastReadout > 250) {
@@ -408,6 +456,8 @@ renderer.setAnimationLoop((now) => {
   get animatedCount() { return animator.count; },
   get frames() { return frames; },
   get harvest() { return report; },
+  get flow() { return flow.stats(); },
+  setTankMass: (kg: number) => flow.setTankMass(kg),
   get blurred() { return [...animator.blurred]; },
   phaseOf: (k: Parameters<typeof animator.phaseOf>[0]) => animator.phaseOf(k),
   info: () => renderer.info.render,
