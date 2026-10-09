@@ -54,6 +54,12 @@ export interface FlowInputs {
   elevator: number; // m/s
   /** 作物を取り込むか（コーンヘッドのときは小麦の流れを止める） */
   intake?: boolean;
+  /** 刈った量 [kg/s、穀粒＋MOG]。指定すると収量 × 刈幅 × 地速 の代わりに使う（圃場シナリオ、M6） */
+  feedKgS?: number;
+  /** タンクを外から決める（圃場シナリオ）。粒子が届いても質量は足さず、排出の粒子は unloading の間だけ出す */
+  tank?: { mass: number; unloading: boolean };
+  /** 排出した穀粒が落ちる高さ（運搬車の荷台。省略時は地面） */
+  unloadFloor?: number;
 }
 
 interface Waypoint {
@@ -198,7 +204,7 @@ const TAILINGS: Stage[] = [
 ];
 
 const UNLOAD: Stage[] = [
-  { kind: 'fall', floor: () => 0.02, next: 'ground' },
+  { kind: 'fall', floor: () => Number.NEGATIVE_INFINITY, next: 'ground' }, // 床は運搬車の荷台か地面（system が決める）
   { kind: 'ground' },
 ];
 
@@ -221,6 +227,8 @@ export class FlowSystem {
   delivered = 0;
   unloaded = 0;
   cutting = false;
+  private external = false;
+  private unloadFloor = 0.02;
   readonly tankCapacityMass = tankCapacity() * spec.crop.wheat.testWeight;
   private mats: Record<MountId, Matrix4> = mountMatrices({ headerAngle: 0, faceTilt: 0, lateralTilt: 0, reelLift: 0, reelSlide: 0, augerDeploy: 0, flaps: 0, steer: 0 });
 
@@ -274,10 +282,15 @@ export class FlowSystem {
     // --- 刈り取り：ヘッダが作物の高さより下にあり、走っているとき
     const cutH = cutHeight(inp.pose);
     const mog = inp.mogRatio ?? mogFromCut(cutH);
-    this.cutting = inp.intake !== false && header && sep && inp.groundSpeed > 0 && cutH < inp.cropHeight - 0.05;
+    this.external = !!inp.tank;
+    if (inp.tank) this.tankMass = inp.tank.mass;
+    this.unloadFloor = inp.unloadFloor ?? 0.02;
+    this.cutting = inp.feedKgS !== undefined
+      ? header && sep && inp.feedKgS > 0.05
+      : inp.intake !== false && header && sep && inp.groundSpeed > 0 && cutH < inp.cropHeight - 0.05;
     if (this.cutting) {
       const grainKgS = (inp.yield * 1000 * spec.header.width * (inp.groundSpeed / 3.6)) / 10000; // t/ha → kg/m²
-      const totalKgS = grainKgS * (1 + mog);
+      const totalKgS = inp.feedKgS ?? grainKgS * (1 + mog);
       this.acc.crop += (totalKgS * dt) / MASS_PER_PARTICLE.crop;
       while (this.acc.crop >= 1) {
         this.acc.crop -= 1;
@@ -335,11 +348,11 @@ export class FlowSystem {
     });
 
     // --- 排出：オーガを 90° 以上振り出して排出 ON、タンクに穀粒があるとき
-    const unloading = on && inp.unloadOn && inp.pose.augerDeploy >= 90 && this.tankMass > 0;
+    const unloading = inp.tank ? inp.tank.unloading : on && inp.unloadOn && inp.pose.augerDeploy >= 90 && this.tankMass > 0;
     if (unloading) {
       const rate = spec.unload.rate * spec.crop.wheat.testWeight; // kg/s
-      const m = Math.min(this.tankMass, rate * dt);
-      this.tankMass -= m;
+      const m = inp.tank ? rate * dt : Math.min(this.tankMass, rate * dt);
+      if (!inp.tank) this.tankMass -= m;
       this.unloaded += m;
       this.acc.unload += m / MASS_PER_PARTICLE.unload;
       const u = spec.unload;
@@ -438,11 +451,12 @@ export class FlowSystem {
           q.pos.addScaledVector(q.vel, budget);
           let floor = st.floor(q);
           if (Number.isNaN(floor)) floor = this.pileTopY();
+          else if (floor === Number.NEGATIVE_INFINITY) floor = this.unloadFloor;
           budget = 0;
           if (q.pos.y <= floor) {
             q.pos.y = floor;
             if (st.next === 'pile') {
-              this.tankMass = Math.min(this.tankCapacityMass, this.tankMass + MASS_PER_PARTICLE[flow]);
+              if (!this.external) this.tankMass = Math.min(this.tankCapacityMass, this.tankMass + MASS_PER_PARTICLE[flow]);
               this.delivered += MASS_PER_PARTICLE[flow];
               alive = false;
               break;

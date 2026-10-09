@@ -39,6 +39,8 @@ import { FlowView, FLOW_COLORS, FLOW_NAMES } from './view/flowView';
 import { MaterialLib } from './view/materials';
 import { buildModel, GROUP_NAMES } from './view/scene';
 import { SectionView } from './view/section';
+import { HarvestScenario, defaultScenarioParams, type ScenarioParams, type ScenarioReport } from './field/scenario';
+import { FieldView, FIELD_SKY } from './view/fieldView';
 
 /** 画面には両方のヘッダの部品を作り、付いているヘッダだけを表示・検査する（M5） */
 const parts = buildParts(undefined, 'all');
@@ -116,6 +118,8 @@ const presets: Record<string, { pos: [number, number, number]; target: [number, 
   後方: { pos: [-14, 5, 6], target: [-1, 1.8, 0] },
   キャブ視点: { pos: [1.0, 3.35, -0.25], target: [9, 0.4, -0.25] },
   ヘッダ正面: { pos: [15, 2.6, 0.01], target: [3.5, 1.0, 0] },
+  刈り取りの近く: { pos: [9.5, 1.7, -8.2], target: [5.2, 0.6, -4.6] },
+  圃場の上空: { pos: [-30, 70, -40], target: [0, 0, 4] },
 };
 function setCamera(name: keyof typeof presets) {
   const p = presets[name];
@@ -151,7 +155,7 @@ function applyView() {
     model.setPartVisible(id, visible);
   }
   section.setEnabled(view.mode === '断面');
-  grid.visible = view.grid;
+  grid.visible = view.grid && !fieldCfg.show;
 }
 
 function setMode(m: typeof view.mode) {
@@ -201,6 +205,12 @@ const crop = { ...defaultConditions(), autoMog: true, mog: spec.crop.wheat.mogRa
 const harvestEl = document.getElementById('harvest')!;
 let report: HarvestReport | null = null;
 function renderHarvest() {
+  const summary = document.querySelector('.harvest summary');
+  if (summary) summary.textContent = fieldCfg.show ? '圃場シナリオ（100 m × 50 m の小麦）' : '収穫の成立チェック（小麦）';
+  if (fieldCfg.show) {
+    renderScenario();
+    return;
+  }
   report = harvestReport(pose, {
     yield: crop.yield,
     cropHeight: crop.cropHeight,
@@ -226,8 +236,108 @@ function renderHarvest() {
     `<div class="sum">刈高さ <b>${(r.cut * 100).toFixed(0)} cm</b> · 最大速度 <b>${r.maxSpeed.toFixed(1)} km/h</b>（${r.bottleneck.name}）· タンク満杯 <b>${r.fillMinutes.toFixed(0)} 分</b></div>`;
 }
 
+// ---------- field scenario (design §16.6・§21、M6) ----------
+// 小さい画面（スマートフォン）は株を描かない軽量表示から始める
+const fieldCfg = { show: false, running: false, speedUp: 3, quality: (window.innerWidth < 640 ? '軽量' : '詳細') as '詳細' | '軽量', ...defaultScenarioParams() };
+let scenario: HarvestScenario | null = null;
+let fieldView: FieldView | null = null;
+let fieldTime = 0;
+const defaultBackground = scene.background.clone();
+function scenarioParams(): ScenarioParams {
+  const { show, running, speedUp, quality, ...p } = fieldCfg;
+  void show; void running; void speedUp; void quality;
+  return p;
+}
+function resetScenario() {
+  scenario = new HarvestScenario(scenarioParams());
+  if (!fieldView) {
+    fieldView = new FieldView(scenario.field);
+    scene.add(fieldView.root);
+    scene.add(fieldView.cart);
+    fieldView.setQuality(fieldCfg.quality === '軽量' ? 'low' : 'high');
+  } else fieldView.setField(scenario.field);
+  flow.clear();
+  pose = { ...scenario.pose };
+  Object.assign(target, pose);
+  update();
+  fieldView.update(scenario, camera.position, fieldTime);
+  renderScenario(true);
+}
+function setFieldMode(on: boolean) {
+  fieldCfg.show = on;
+  if (on) {
+    if (headerType !== 'draper') setHeader('draper');
+    if (!scenario) resetScenario();
+    scene.background = FIELD_SKY;
+    const harvestDetails = document.querySelector<HTMLDetailsElement>('.harvest details');
+    if (harvestDetails) harvestDetails.open = true;
+  } else {
+    fieldCfg.running = false;
+    scene.background = defaultBackground;
+    machine.groundSpeed = DEFAULT_MACHINE.groundSpeed;
+    machine.unloadOn = false;
+    setPose(WORK_POSE);
+    flow.clear();
+  }
+  fieldView?.setVisible(on);
+  ground.visible = !on;
+  applyView();
+  renderHarvest();
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+/** 最後まで（固定の刻みで）進める。画面の圃場もその状態になる */
+function finishScenario() {
+  if (!scenario) return;
+  scenario.runToEnd();
+  fieldCfg.running = false;
+  flow.clear();
+  renderScenario(true);
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+
+const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function sparkline(series: Array<[number, number]>, total: number): string {
+  if (series.length < 2) return '';
+  const W = 300;
+  const H = 40;
+  const tx = (t: number) => (t / Math.max(total, 1)) * W;
+  const pts = series.map(([t, v]) => `${tx(t).toFixed(1)},${(H - v * H).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="spark" role="img" aria-label="タンク量の推移"><line x1="0" x2="${W}" y1="0.5" y2="0.5" class="cap"/><polyline points="${pts}"/></svg>`;
+}
+let lastScenarioHtml = 0;
+function renderScenario(force = false) {
+  if (!scenario || !fieldCfg.show) return;
+  const now = performance.now();
+  if (!force && now - lastScenarioHtml < 250) return;
+  lastScenarioHtml = now;
+  const sc = scenario;
+  const r: ScenarioReport = sc.report();
+  const pass = sc.place.pass > 0 ? `行程 ${sc.place.pass} / ${r.passes}` : '枕地で旋回';
+  const tankPct = (sc.tankMass / sc.capacityKg) * 100;
+  const unload = sc.unloadFlowing ? '<b>排出中</b>（運搬車へ）' : sc.unloadReq && !sc.laneClear ? '<span class="warn">運搬車待ち（左側に作物）</span>' : sc.unloadReq ? '排出の準備' : '';
+  const checks = r.checks
+    .map((c) => {
+      const live = !r.done && (c.id === 'W-7' || c.id === 'W-8');
+      return `<li><span class="mark ${live ? 'live' : c.ok ? 'ok' : 'ng'}">${live ? '…' : c.ok ? '✓' : '✗'} ${c.id}</span><span>${c.name}</span><span class="detail">${c.detail}</span></li>`;
+    })
+    .join('');
+  const rows = r.peaks
+    .map((p) => `<tr><td>${p.name}</td><td>${(p.peak * 100).toFixed(0)}%</td><td><div class="bar"><i class="${p.peak > 1 ? 'over' : ''}" style="width:${Math.min(100, p.peak * 100)}%"></i></div></td><td>平均 ${(p.avg * 100).toFixed(0)}%</td></tr>`)
+    .join('');
+  const log = r.log.slice(-4).map(([t, s]) => `<span>${mmss(t)} ${s}</span>`).join(' · ');
+  harvestEl.innerHTML =
+    `<div class="sum">${r.done ? '<b>完了</b>' : fieldCfg.running ? '実行中' : '停止中'} · ${pass} · 工程時間 <b>${mmss(r.time)}</b> · 地速 <b>${(sc.v * 3.6).toFixed(1)} km/h</b></div>` +
+    `<div class="sum">刈った面積 <b>${r.areaHa.toFixed(3)} ha</b> · 収穫 <b>${(r.harvestedKg / 1000).toFixed(2)} t</b> · 排出 <b>${(r.unloadedKg / 1000).toFixed(1)} t</b> · 能率 ${r.fieldRate.toFixed(1)} ha/h（旋回込み）</div>` +
+    `<div class="sum">タンク <b>${tankPct.toFixed(0)}%</b>（${(sc.tankMass / 1000).toFixed(1)} t）${unload ? ' · ' + unload : ''}</div>` +
+    sparkline(r.tankSeries, Math.max(r.time, 60)) +
+    `<ul>${checks}</ul>` +
+    `<table aria-label="段ごとの負荷率のピーク"><tr><td colspan="4" style="border-top:0;color:var(--muted)">段ごとの負荷率（実走のピークと平均、刈っている間）</td></tr>${rows}</table>` +
+    `<div class="log">${log}</div>`;
+}
+
 // ---------- header type (M5) ----------
 function setHeader(h: HeaderType) {
+  if (h !== 'draper' && fieldCfg.show) setFieldMode(false);
   headerType = h;
   view.headerKind = h === 'corn' ? 'コーン（12 条）' : 'ドレーパー（小麦）';
   if (h === 'corn') flow.clear();
@@ -338,6 +448,28 @@ function showInfo(id: string | null) {
 // ---------- GUI ----------
 const ranges = poseRanges();
 const gui = new GUI({ title: '操作' });
+const fField = gui.addFolder('圃場シナリオ（M6）');
+fField.add(fieldCfg, 'show').name('圃場を表示').onChange((on: boolean) => setFieldMode(on));
+fField.add(fieldCfg, 'running').name('実行').onChange((on: boolean) => { if (on && !fieldCfg.show) setFieldMode(true); if (on && scenario?.done) resetScenario(); });
+fField.add(fieldCfg, 'speedUp', 1, 20, 1).name('早送り（×実時間）');
+fField.add(fieldCfg, 'quality', ['詳細', '軽量']).name('小麦の描画').onChange(() => fieldView?.setQuality(fieldCfg.quality === '軽量' ? 'low' : 'high'));
+const fieldActions = {
+  やり直し: () => { fieldCfg.running = false; resetScenario(); gui.controllersRecursive().forEach((c) => c.updateDisplay()); },
+  最後まで計算: () => { if (!fieldCfg.show) setFieldMode(true); finishScenario(); },
+};
+fField.add(fieldActions, 'やり直し');
+fField.add(fieldActions, '最後まで計算');
+const fParams = fField.addFolder('条件（変えるとやり直し）');
+const reset = () => { fieldCfg.running = false; if (fieldCfg.show) resetScenario(); else scenario = null; };
+fParams.add(fieldCfg, 'speed', 2, 8, 0.1).name('地速 [km/h]').onFinishChange(reset);
+fParams.add(fieldCfg, 'yield', spec.crop.wheat.yieldRange[0], spec.crop.wheat.yieldRange[1], 0.1).name('収量 [t/ha]').onFinishChange(reset);
+fParams.add(fieldCfg, 'cropHeight', spec.crop.wheat.heightRange[0], spec.crop.wheat.heightRange[1], 0.01).name('草丈 [m]').onFinishChange(reset);
+fParams.add(fieldCfg, 'cutHeight', spec.crop.wheat.stubbleRange[0], 0.3, 0.01).name('刈高さ [m]').onFinishChange(reset);
+fParams.add(fieldCfg, 'overlap', -1, 1, 0.05).name('行程の重なり [m]').onFinishChange(reset);
+fParams.add(fieldCfg, 'roundTrips', 1, 2, 1).name('往復数').onFinishChange(reset);
+fParams.add(fieldCfg, 'startTank', 0, 1, 0.05).name('開始時のタンク').onFinishChange(reset);
+fParams.add(fieldCfg, 'unloadAt', 0.3, 1, 0.05).name('運搬車を呼ぶタンク量').onFinishChange(reset);
+fParams.close();
 const fRun = gui.addFolder('運転');
 fRun.add(machine, 'engineOn').name('エンジン');
 fRun.add(machine, 'headerOn').name('ヘッダ（刈取部）');
@@ -452,7 +584,9 @@ function renderReadout(rates: ReturnType<typeof motionRates>) {
   const blur = [...animator.blurred].map((k) => KEY_NAMES[k]).join('、');
   const limited = target.headerAngle <= headerMin + 1e-6 && headerMin > poseRanges().headerAngle[0] + 1e-6;
   readoutEl.innerHTML =
-    `<div>再生 <b>${machine.timeScale === 1 ? '実時間' : `実時間の ${machine.timeScale.toFixed(2)} 倍`}</b>${view.paused ? '（一時停止）' : ''} · 油圧は実時間</div>` +
+    (fieldCfg.show
+      ? `<div>圃場シナリオ：再生 <b>実時間の ${fieldCfg.speedUp} 倍</b>${fieldCfg.running && !view.paused ? '' : '（停止中）'} · 油圧も同じ時間</div>`
+      : `<div>再生 <b>${machine.timeScale === 1 ? '実時間' : `実時間の ${machine.timeScale.toFixed(2)} 倍`}</b>${view.paused ? '（一時停止）' : ''} · 油圧は実時間</div>`) +
     `<div>実機の値：地速 <b>${machine.engineOn ? machine.groundSpeed.toFixed(1) : '0.0'} km/h</b> · リール <b>${rates.reelRpm.toFixed(0)} rpm</b> · 前輪 <b>${rpm(rates.wheelFrontOmegaZ)} rpm</b> · ナイフ <b>${rates.knifeHz} Hz</b> · シュー <b>${rates.shoeHz} Hz</b></div>` +
     (blur ? `<div>速すぎて見えない動きはブラー表示：${blur}</div>` : '') +
     (limited ? `<div class="warn">フィーダ角は地面で制限中（下限 ${headerMin.toFixed(1)}°）</div>` : '') +
@@ -471,6 +605,23 @@ renderer.setAnimationLoop((now) => {
   frames++;
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  // 圃場シナリオ：機体の動きと姿勢はシナリオが決める（工程の時間で、早送りつき）
+  const fieldOn = fieldCfg.show && !!scenario && !!fieldView;
+  if (fieldOn && scenario) {
+    if (fieldCfg.running && !view.paused) {
+      scenario.advance(dt * fieldCfg.speedUp);
+      if (scenario.done) {
+        fieldCfg.running = false;
+        renderScenario(true);
+        gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
+    }
+    machine.groundSpeed = scenario.v * 3.6;
+    machine.unloadOn = scenario.unloadFlowing;
+    Object.assign(target, scenario.pose);
+    pose = { ...scenario.pose };
+    model.setPose(pose);
+  }
   // 油圧（実時間）
   const next = approachPose(pose, target, dt);
   const moved = (Object.keys(next) as Array<keyof Pose>).some((k) => next[k] !== pose[k]);
@@ -487,11 +638,22 @@ renderer.setAnimationLoop((now) => {
   }
   // 工程（再生倍率つき）
   const rates = motionRates(machine);
-  const ts = view.paused ? 0 : machine.timeScale;
+  const ts = view.paused ? 0 : fieldOn ? (fieldCfg.running ? fieldCfg.speedUp : 0) : machine.timeScale;
+  if (fieldOn && scenario && fieldView) {
+    fieldTime += dt;
+    fieldView.update(scenario, camera.position, fieldTime);
+  }
   animator.update(dt, ts, rates);
   if (view.flow && view.explode === 0) {
-    flow.update(dt * ts, {
+    const sc = fieldOn ? scenario : null;
+    // 早送りでも粒子が経路を外れないように、1 回に進める時間を 1/30 s 以下に分ける
+    const total = dt * ts;
+    const n = Math.max(1, Math.ceil(total / (1 / 30)));
+    for (let i = 0; i < n; i++) flow.update(total / n, {
       intake: headerType === 'draper',
+      feedKgS: sc ? sc.feedKgS : undefined,
+      tank: sc ? { mass: sc.tankMass, unloading: sc.unloadFlowing } : undefined,
+      unloadFloor: sc && fieldView?.cart.visible ? spec.field.cart.top - 0.3 : undefined,
       pose,
       engineOn: machine.engineOn,
       headerOn: machine.headerOn,
@@ -508,6 +670,7 @@ renderer.setAnimationLoop((now) => {
     flowView.sync();
   }
   flowView.root.visible = view.flow && view.explode === 0;
+  if (fieldOn) groundDist = 0;
   groundDist = (groundDist + rates.ground * dt * ts) % 1;
   grid.position.x = -groundDist;
   if (now - lastReadout > 250) {
@@ -541,4 +704,14 @@ renderer.setAnimationLoop((now) => {
   get blurred() { return [...animator.blurred]; },
   phaseOf: (k: Parameters<typeof animator.phaseOf>[0]) => animator.phaseOf(k),
   info: () => renderer.info.render,
+  field: {
+    show: (on: boolean) => setFieldMode(on),
+    run: (on: boolean, speedUp?: number) => { if (speedUp) fieldCfg.speedUp = speedUp; fieldCfg.running = on; },
+    finish: () => { finishScenario(); return scenario!.report(); },
+    reset: (p: Partial<ScenarioParams>) => { Object.assign(fieldCfg, p); resetScenario(); },
+    get report() { return scenario?.report() ?? null; },
+    get t() { return scenario?.t ?? 0; },
+    get nearChunks() { return fieldView?.nearChunks ?? 0; },
+    quality: (q: '詳細' | '軽量') => { fieldCfg.quality = q; fieldView?.setQuality(q === '軽量' ? 'low' : 'high'); gui.controllersRecursive().forEach((c) => c.updateDisplay()); },
+  },
 };

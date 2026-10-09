@@ -155,6 +155,29 @@ export const spec = {
     spreadWidth: 15.2, // m（わら。籾殻は 6 m 程度の例もある）
     unloadToFillMax: 0.2, // 排出時間 / 満杯までの時間 の上限（D）
   },
+  /**
+   * 圃場シナリオ（design §16.5〜16.6・§21、M6）。圃場は長辺 X × 短辺 Z、周りは刈り終えた枕地。
+   * 行程の間隔 ＝ 刈幅 − 重なり。旋回は前車軸中心を基準に、後輪操舵の最小半径に余裕を持たせる。
+   */
+  field: {
+    length: 100,
+    width: 50,
+    cell: 0.25, // 刈り取り状態を記録するセル（m）
+    headland: 25, // 周りの枕地（描画と旋回の範囲）
+    heightNoise: 0.04, // 草丈のばらつき（m、なめらかな変化の振幅）
+    yieldNoise: 0.06, // 収量のばらつき（±割合）
+    cutHeight: 0.15, // m
+    overlap: 0.2, // 隣の行程との重なり（m、自動操舵の例）
+    turnRadius: 6.6, // m（最小 ＝ ホイールベース 3.75 / tan 32° ＝ 6.0 に 1 割の余裕）
+    turnSpeed: 7, // km/h（枕地）
+    accel: 0.5, // m/s²
+    raisedHeaderAngle: 10, // 枕地でのフィーダ角（刈刃 0.88 m）
+    headerLead: 2, // 刈刃が作物に入る何 m 手前でヘッダを下ろし終えるか
+    runOut: 1, // 機体の後端が作物を出てから旋回を始めるまで（m）
+    startTank: 0.7, // 開始時のタンク（前の往復で刈った分が残っている想定）
+    unloadAt: 0.7, // 運搬車を呼ぶタンク量
+    cart: { halfWidth: 1.6, length: 9, top: 2.6 }, // 運搬車（グレインカート）の通り道
+  },
   limits: {
     clearance: 0.05,
     transportHeight: 4.0,

@@ -16,7 +16,17 @@ type Api = {
   setHeader(h: 'draper' | 'corn'): void;
   setLabels(on: boolean): void;
   harvest: { maxSpeed: number; checks: Array<{ id: string; ok: boolean }> } | null;
+  field: {
+    show(on: boolean): void;
+    run(on: boolean, speedUp?: number): void;
+    finish(): Report;
+    quality(q: '詳細' | '軽量'): void;
+    report: Report | null;
+    t: number;
+    nearChunks: number;
+  };
 };
+type Report = { done: boolean; areaHa: number; harvestedKg: number; checks: Array<{ id: string; ok: boolean; detail: string }>; w7: { uncut: number; flattened: number } };
 
 test('ブロックアウトが表示され、作業姿勢で干渉 0 件', async ({ page }) => {
   const errors: string[] = [];
@@ -146,3 +156,33 @@ test('M5：コーンヘッドに切り替えても干渉 0 件、ラベルから
   expect(errors).toEqual([]);
 });
 
+
+test('M6：圃場シナリオ。小麦畑を刈り進み、最後まで計算すると W-1〜W-8 がすべて成立', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 400)); });
+  await page.goto('/');
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  // ソフトウェア描画では株を描くと 1 フレームが数秒かかるので、走らせる間は軽量表示にする
+  await page.evaluate(() => { const c = (window as unknown as { __combine: Api }).__combine; c.field.quality('軽量'); c.field.show(true); c.field.run(true, 20); });
+  await expect(page.locator('.harvest summary')).toContainText('圃場シナリオ');
+  await page.waitForFunction(() => (window as unknown as { __combine: Api }).__combine.field.t > 30, undefined, { timeout: 120_000 });
+  const mid = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.field.report!);
+  expect(mid.areaHa).toBeGreaterThan(0.01);
+  const flow = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.flow);
+  expect(flow.cutting).toBe(true);
+  // 株を描いた状態（詳細）で 1 枚。シェーダがコンパイルできることも確かめる
+  await page.evaluate(() => { const c = (window as unknown as { __combine: Api }).__combine; c.field.run(false); c.field.quality('詳細'); c.setCamera('刈り取りの近く'); });
+  const f0 = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.frames);
+  await page.waitForFunction((f) => (window as unknown as { __combine: Api }).__combine.frames >= f + 2, f0, { timeout: 120_000 });
+  expect(await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.field.nearChunks)).toBeGreaterThan(0);
+  await page.screenshot({ path: 'test-results/m6-field.png' });
+  await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.field.quality('軽量'));
+  const r = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.field.finish());
+  expect(r.done).toBe(true);
+  expect(r.checks.filter((c) => !c.ok).map((c) => `${c.id} ${c.detail}`)).toEqual([]);
+  expect(r.w7.uncut).toBe(0);
+  await expect(page.locator('#harvest')).toContainText('完了');
+  expect(errors).toEqual([]);
+});

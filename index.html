@@ -39,6 +39,12 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 .harvest .bar i{display:block;height:100%;background:var(--accent)}
 .harvest .bar i.over{background:var(--bad)}
 .harvest .sum{margin-top:6px;font-size:12px}
+.harvest .sum + .sum{margin-top:2px}
+.harvest .live{color:var(--muted)} .harvest .warn{color:#E0AE4E}
+.harvest .spark{display:block;width:100%;height:40px;margin-top:6px;background:rgba(255,255,255,.03);border-bottom:1px solid var(--line)}
+.harvest .spark polyline{fill:none;stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.harvest .spark .cap{stroke:var(--bad);stroke-dasharray:3 3;stroke-width:1;vector-effect:non-scaling-stroke}
+.harvest .log{margin-top:6px;font-size:11.5px;color:var(--muted)}
 .status{bottom:calc(12px + env(safe-area-inset-bottom,0px));max-height:45vh;overflow:auto}
 .status h2{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em}
 .badge{display:inline-block;font:600 12px/1.4 var(--f-mono);padding:1px 8px;border-radius:3px;border:1px solid currentColor}
@@ -66,7 +72,7 @@ body{background:var(--bg);color:var(--ink);font:13px/1.6 var(--f-ui);overflow:hi
 <div id="app"></div>
 <section class="hud title">
   <h1>コンバイン3D</h1>
-  <p>設計書 v0.8 の spec から生成。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。中を見るには「表示」の X線・断面・分解を使ってください。</p>
+  <p>設計書 v0.9 の spec から生成。「圃場シナリオ」で 100 m × 50 m の小麦畑を刈れます。ドラッグで回転、右ドラッグで移動、ホイールで拡大。部品をクリックすると詳細を表示します。中を見るには「表示」の X線・断面・分解を使ってください。</p>
   <div class="axes">+X 前 / +Y 上 / +Z 右 · 1 目盛 = 1 m · 原点 = 前車軸直下の地面</div>
   <div class="readout" id="readout" aria-live="off"></div>
 </section>
