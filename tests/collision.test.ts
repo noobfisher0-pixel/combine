@@ -120,3 +120,49 @@ describe('地面', () => {
     expect(low.box.min[1], low.part.id).toBeGreaterThanOrEqual(spec.limits.groundClearance);
   });
 });
+
+describe('コーンヘッド（M5）', () => {
+  const corn = buildParts(spec, 'corn');
+  const sweepCorn = (poses: Pose[], filter: (p: PartDef) => boolean) => {
+    const seen = new Set<string>();
+    const out: Array<Violation & { pose: Partial<Pose> }> = [];
+    for (const pose of poses) {
+      for (const v of checkPose(corn, pose, { filter })) {
+        const key = `${v.a}|${v.b}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ ...v, pose: { headerAngle: pose.headerAngle, faceTilt: pose.faceTilt, lateralTilt: pose.lateralTilt } });
+      }
+    }
+    return out;
+  };
+
+  it('ドレーパーの部品を含まず、12 条ぶんのロウユニットと 13 本の分草ポイントがある', () => {
+    expect(corn.some((p) => p.id.startsWith('header.'))).toBe(false);
+    expect(corn.filter((p) => p.id.startsWith('corn.row')).length).toBe(12);
+    expect(corn.filter((p) => p.id.startsWith('corn.snout')).length).toBe(13);
+  });
+
+  it('全ペア検査（作業姿勢）', () => {
+    const vs = checkPose(corn, WORK_POSE);
+    expect(vs, describeViolations(vs)).toEqual([]);
+  });
+
+  it('スイープ：フィーダ昇降 × フェース前後チルト × 左右チルト', () => {
+    const poses: Pose[] = [];
+    for (const headerAngle of steps(ranges.headerAngle, 0.5))
+      for (const faceTilt of [ranges.faceTilt[0], 0, ranges.faceTilt[1]])
+        for (const lateralTilt of [ranges.lateralTilt[0], 0, ranges.lateralTilt[1]])
+          poses.push({ ...WORK_POSE, headerAngle, faceTilt, lateralTilt });
+    const vs = sweepCorn(poses, (p) => p.mount === 'feeder' || HEADER_MOUNTS.has(p.mount) || p.shape.kind === 'link');
+    expect(vs, describeViolations(vs)).toEqual([]);
+  });
+
+  it('地面：分草ポイントの先端を含め、ヘッダの最下点 ≥ 0（チルト 0、フィーダ全範囲）', () => {
+    for (const headerAngle of steps(ranges.headerAngle, 0.1)) {
+      const placed = place(corn, { ...WORK_POSE, headerAngle }).filter((p) => HEADER_MOUNTS.has(p.part.mount));
+      const minY = Math.min(...placed.map((p) => p.box.min[1]));
+      expect(minY, `headerAngle=${headerAngle}`).toBeGreaterThanOrEqual(0);
+    }
+  });
+});

@@ -64,7 +64,7 @@ export class Animator {
         r.obj.position.copy(r.base).addScaledVector(s.dir, x);
         step = 2 * Math.PI * f * s.amplitude * dt; // 1 フレームの最大移動
       } else {
-        const v = s.key === 'draperCenter' ? rates.draperCenter : s.key === 'elevator' ? rates.elevator : rates.draperSide;
+        const v = s.key === 'draperCenter' ? rates.draperCenter : s.key === 'elevator' ? rates.elevator : s.key === 'cornChain' ? rates.cornChain : rates.draperSide;
         step = v * dt;
         r.phase = (r.phase + step) % s.pitch;
         r.obj.position.copy(r.base).addScaledVector(s.dir, r.phase);
@@ -112,6 +112,8 @@ function spinRate(key: RateKey, r: MotionRates): number {
       return r.auger;
     case 'crossAuger':
       return r.crossAuger;
+    case 'cornAuger':
+      return r.cornAuger;
     default:
       return 0;
   }

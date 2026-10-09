@@ -52,6 +52,8 @@ export interface FlowInputs {
   draperSide: number; // m/s
   draperCenter: number; // m/s
   elevator: number; // m/s
+  /** 作物を取り込むか（コーンヘッドのときは小麦の流れを止める） */
+  intake?: boolean;
 }
 
 interface Waypoint {
@@ -272,7 +274,7 @@ export class FlowSystem {
     // --- 刈り取り：ヘッダが作物の高さより下にあり、走っているとき
     const cutH = cutHeight(inp.pose);
     const mog = inp.mogRatio ?? mogFromCut(cutH);
-    this.cutting = header && sep && inp.groundSpeed > 0 && cutH < inp.cropHeight - 0.05;
+    this.cutting = inp.intake !== false && header && sep && inp.groundSpeed > 0 && cutH < inp.cropHeight - 0.05;
     if (this.cutting) {
       const grainKgS = (inp.yield * 1000 * spec.header.width * (inp.groundSpeed / 3.6)) / 10000; // t/ha → kg/m²
       const totalKgS = grainKgS * (1 + mog);

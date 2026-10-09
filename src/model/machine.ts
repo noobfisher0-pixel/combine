@@ -57,6 +57,8 @@ export interface MotionRates {
   auger: number; // クリーングレイン・テーリング・バブルアップ
   crossAuger: number; // タンク底（排出中だけ）
   elevator: number; // m/s（パドルチェーン）
+  cornChain: number; // m/s（コーンヘッドのギャザリングチェーン）
+  cornAuger: number; // rad/s（コーンヘッドのクロスオーガ）
 }
 
 /** 小麦での運転値（02 §2・§3、03 §4。回転数は資料の範囲の中から小麦向けの値を選んだ推定） */
@@ -104,6 +106,8 @@ export function motionRates(s: MachineState): MotionRates {
     auger: sep ? rad(INTERNAL_RPM.auger) : 0,
     crossAuger: on && s.unloadOn ? rad(INTERNAL_RPM.auger) : 0,
     elevator: sep ? INTERNAL_RPM.elevatorSpeed : 0,
+    cornChain: header ? spec.cornHead.chainSpeed : 0,
+    cornAuger: header ? rad(spec.cornHead.augerRpm) : 0,
   };
 }
 

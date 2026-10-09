@@ -38,6 +38,7 @@ import {
   spreaderVisual,
 } from './interior';
 import { unloadVisual } from './unload';
+import { cornAugerVisual, cornBackVisual, cornRowVisual, cornSnoutVisual, cornTroughVisual } from './corn';
 import { wheelVisual } from './wheel';
 
 type VisualFn = (part: PartDef, vb: VisualBuilder) => void;
@@ -80,6 +81,11 @@ const VISUALS: Array<[string, VisualFn]> = [
   ['residue.chopper', chopperVisual],
   ['residue.chaff*', spreaderVisual],
   ['residue.spreader*', spreaderVisual],
+  ['corn.back', cornBackVisual],
+  ['corn.trough', cornTroughVisual],
+  ['corn.auger', cornAugerVisual],
+  ['corn.snout*', cornSnoutVisual],
+  ['corn.row*', cornRowVisual],
 ];
 
 function find(id: string): VisualFn | undefined {

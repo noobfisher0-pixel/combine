@@ -13,7 +13,7 @@ import { MaterialLib } from '../src/view/materials';
 import { buildVisual, hasVisual } from '../src/view/visuals';
 
 const TOL = 0.012;
-const parts = buildParts();
+const parts = buildParts(undefined, 'all'); // 両方のヘッダの部品を検査する
 const lib = new MaterialLib();
 const mounts = mountMatrices(DEFAULT_POSE);
 

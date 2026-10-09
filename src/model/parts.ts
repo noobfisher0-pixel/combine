@@ -1,5 +1,5 @@
 import { spec, type Spec } from '../spec/spec';
-import type { Confidence, Group, MountId, PartDef, Shape, Vec3 } from './types';
+import type { Confidence, Group, HeaderType, MountId, PartDef, Shape, Vec3 } from './types';
 
 /** x・y・z の範囲（順不同）から箱を作る。 */
 function boxRange(x: readonly number[], y: readonly number[], z: readonly number[], rotZ?: number): Shape {
@@ -34,7 +34,20 @@ const S: Confidence = 'source';
 const E: Confidence = 'estimate';
 const D: Confidence = 'design';
 
-export function buildParts(s: Spec = spec): PartDef[] {
+/**
+ * 部品の一覧。header = 'all' は両方のヘッダの部品を含む（画面で切り替えるため）。
+ * 干渉検査や地面の制限には、そのとき付いているヘッダだけを使う（activeParts）。
+ */
+export function buildParts(s: Spec = spec, header: HeaderType | 'all' = 'draper'): PartDef[] {
+  const all = buildAllParts(s);
+  return header === 'all' ? all : activeParts(all, header);
+}
+
+export function activeParts(parts: PartDef[], header: HeaderType): PartDef[] {
+  return parts.filter((p) => !p.variant || p.variant === header);
+}
+
+function buildAllParts(s: Spec): PartDef[] {
   const parts: PartDef[] = [];
   const add = (
     id: string,
@@ -231,6 +244,25 @@ export function buildParts(s: Spec = spec): PartDef[] {
       cyl([ss.x, ss.y - ss.t / 2, side * ss.z], [ss.x, ss.y + ss.t / 2, side * ss.z], ss.radius), S, '03 §4 φ0.80');
   }
 
+  // ---------- コーンヘッド（ヘッダ切替） ----------
+  const ch = s.cornHead;
+  const cw = (ch.rows * ch.rowSpacing) / 2;
+  const corn = (id: string, name: string, group: Group, shape: Shape, confidence: Confidence, source: string) =>
+    parts.push({ id, name, group, layer: 'exterior', mount: 'header', shape, meta: { confidence, source }, variant: 'corn' });
+  corn('corn.back', 'コーンヘッド背板', 'header', boxRange(ch.back.x, ch.back.y, [-cw, cw]), E, '01 §3');
+  corn('corn.trough', 'クロスオーガのトラフ', 'header', boxRange(ch.trough.x, ch.trough.y, [-cw, cw]), E, '01 §3');
+  corn('corn.auger', 'クロスオーガ', 'header', cyl([ch.auger.x, ch.auger.y, -cw + 0.12], [ch.auger.x, ch.auger.y, cw - 0.12], ch.auger.radius), S, '01 §3 φ0.40');
+  for (let k = 0; k <= ch.rows; k++) {
+    const z = -cw + k * ch.rowSpacing;
+    const sn = slab(ch.snout.rear, ch.snout.tip, ch.snout.t, ch.snout.halfWidth) as Extract<Shape, { kind: 'box' }>;
+    corn(`corn.snout${k}`, `分草ポイント ${k + 1}`, 'header', { ...sn, center: [sn.center[0], sn.center[1], z] }, E, '01 §3 低背・フローティング');
+  }
+  for (let k = 0; k < ch.rows; k++) {
+    const z = -cw + (k + 0.5) * ch.rowSpacing;
+    corn(`corn.row${k}`, `ロウユニット ${k + 1}`, 'header', boxRange(ch.rowUnit.x, ch.rowUnit.y, [z - ch.rowUnit.halfWidth, z + ch.rowUnit.halfWidth]), E, '01 §3 スナッパーロール 2 本・ギャザリングチェーン 2 本');
+  }
+  // ドレーパーヘッダの部品に印を付ける
+  for (const p of parts) if (p.id.startsWith('header.')) p.variant = 'draper';
   return parts;
 }
 
@@ -281,4 +313,9 @@ export const ALLOWED_CONTACTS: ReadonlyArray<readonly [string, string, string]> 
   ['header.end*', 'header.deck', 'エンドシールドはデッキ端に立つ'],
   ['header.end*', 'header.back', 'エンドシールドは背板に接する'],
   ['header.reelArm*', 'header.back', 'リールアームの根元は背板上端のピボット'],
+  ['feeder.face', 'corn.back', 'コーンヘッドをフェースに掛ける'],
+  ['feeder.housing', 'corn.back', 'フェースのチルト時にフィーダ先端と背板が接する'],
+  ['corn.trough', 'corn.back', 'コーンヘッド本体'],
+  ['corn.auger', 'corn.trough', 'オーガはトラフの中'],
+  ['corn.row*', 'corn.trough', 'ロウユニットはトラフの前縁に取り付け'],
 ];

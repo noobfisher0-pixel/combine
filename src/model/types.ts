@@ -49,7 +49,11 @@ export interface PartDef {
   mount: MountId;
   shape: Shape;
   meta: { confidence: Confidence; source: string };
+  /** ヘッダの種類ごとの部品（省略時は共通） */
+  variant?: HeaderType;
 }
+
+export type HeaderType = 'draper' | 'corn';
 
 export interface Pose {
   headerAngle: number; // deg

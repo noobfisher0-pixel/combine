@@ -32,7 +32,8 @@ export const v3 = (p: Vec3 | readonly number[]) => new Vector3(p[0], p[1], p[2])
 /** 動きの種類（design §6.2）。速さは key で MotionRates から引く。 */
 export type RateKey =
   | 'wheelFront' | 'wheelRear' | 'reel' | 'screen' | 'knife' | 'shoe' | 'draperSide' | 'draperCenter'
-  | 'rotor' | 'beater' | 'fan' | 'chopper' | 'spreader' | 'auger' | 'crossAuger' | 'elevator';
+  | 'rotor' | 'beater' | 'fan' | 'chopper' | 'spreader' | 'auger' | 'crossAuger' | 'elevator'
+  | 'cornChain' | 'cornAuger';
 export type RigSpec =
   /** origin を通る axis 回りの回転。pitch = 見た目が繰り返す角度（ストロボ判定用） */
   /** sign：内部機構（軸回りの回転数で回るもの）の回る向き。axis 回りに右手系で +1 / −1 */

@@ -5,6 +5,7 @@ import {
   Color,
   DirectionalLight,
   GridHelper,
+  Group,
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
@@ -23,7 +24,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { checkPose, type Violation } from './collision/check';
 import { DEFAULT_POSE, HEADER_MOUNTS, poseRanges, TRANSPORT_POSE, UNLOAD_POSE, WORK_POSE } from './model/kinematics';
-import { buildParts } from './model/parts';
+import { activeParts, buildParts } from './model/parts';
+import { describePart } from './model/descriptions';
+import type { HeaderType } from './model/types';
+import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { spec } from './spec/spec';
 import type { Pose } from './model/types';
 import { approachPose, DEFAULT_MACHINE, LIMITS, motionRates } from './model/machine';
@@ -36,8 +40,11 @@ import { MaterialLib } from './view/materials';
 import { buildModel, GROUP_NAMES } from './view/scene';
 import { SectionView } from './view/section';
 
-const parts = buildParts();
+/** 画面には両方のヘッダの部品を作り、付いているヘッダだけを表示・検査する（M5） */
+const parts = buildParts(undefined, 'all');
 const byId = new Map(parts.map((p) => [p.id, p]));
+let headerType: HeaderType = 'draper';
+const active = () => activeParts(parts, headerType);
 
 // ---------- renderer / scene ----------
 const app = document.getElementById('app')!;
@@ -98,7 +105,7 @@ const animator = new Animator(model.root, model.proxies);
 const flow = new FlowSystem(1);
 const flowView = new FlowView(flow);
 scene.add(flowView.root);
-const view = { paused: false, explode: 0, flow: true, mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
+const view = { paused: false, explode: 0, flow: true, labels: false, headerKind: 'ドレーパー（小麦）', mode: '外観' as '外観' | 'X線' | '断面', shape: '詳細' as '詳細' | '検査用ブロック', header: true, grid: true };
 
 // ---------- camera presets ----------
 const presets: Record<string, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -107,6 +114,8 @@ const presets: Record<string, { pos: [number, number, number]; target: [number, 
   真横左: { pos: [-0.4, 2.2, -16], target: [-0.4, 2.0, 0] },
   真上: { pos: [-0.4, 22, 0.01], target: [-0.4, 0, 0] },
   後方: { pos: [-14, 5, 6], target: [-1, 1.8, 0] },
+  キャブ視点: { pos: [1.0, 3.35, -0.25], target: [9, 0.4, -0.25] },
+  ヘッダ正面: { pos: [15, 2.6, 0.01], target: [3.5, 1.0, 0] },
 };
 function setCamera(name: keyof typeof presets) {
   const p = presets[name];
@@ -128,13 +137,13 @@ function applyView() {
     mat.needsUpdate = true;
   }
   const harvestDetails = document.querySelector<HTMLDetailsElement>('.harvest details');
-  if (harvestDetails && (view.mode !== '外観' || view.explode > 0)) harvestDetails.open = false;
+  if (harvestDetails && (view.mode !== '外観' || view.explode > 0 || headerType === 'corn' || view.labels)) harvestDetails.open = false;
   model.setDetail(view.shape === '詳細');
   // 断面では、完全に右側（z > 0）にある部品は視界を遮るので隠す（R-15）
   const box = new Box3();
   for (const [id, proxy] of model.proxies) {
     const part = byId.get(id)!;
-    let visible = view.header || !HEADER_MOUNTS.has(part.mount);
+    let visible = (view.header || !HEADER_MOUNTS.has(part.mount)) && (!part.variant || part.variant === headerType);
     if (view.mode === '断面') {
       box.setFromObject(proxy);
       if (box.min.z > 0) visible = false;
@@ -161,10 +170,11 @@ function runCheck() {
     checkEl.innerHTML = '<span class="badge">分解表示中</span> <span style="color:var(--muted)">組み立てた状態に戻すと検査します</span>';
     return;
   }
-  violations = checkPose(parts, pose, { skip: (p) => !view.header && HEADER_MOUNTS.has(p.mount) });
+  violations = checkPose(active(), pose, { skip: (p) => !view.header && HEADER_MOUNTS.has(p.mount) });
   model.highlight(new Set(violations.flatMap((v) => [v.a, v.b])));
   if (violations.length === 0) {
-    checkEl.innerHTML = `<span class="badge ok">干渉 0 件</span> <span style="color:var(--muted)">${parts.length} 部品・${(parts.length * (parts.length - 1)) / 2} 組を検査</span>`;
+    const n = active().length;
+    checkEl.innerHTML = `<span class="badge ok">干渉 0 件</span> <span style="color:var(--muted)">${n} 部品・${(n * (n - 1)) / 2} 組を検査</span>`;
   } else {
     const items = violations
       .map((v) => `<li>${byId.get(v.a)!.name} × ${byId.get(v.b)!.name}（隙間 ${(v.gap * 100).toFixed(1)} cm）</li>`)
@@ -182,7 +192,7 @@ function update() {
 let headerMin = poseRanges().headerAngle[0];
 /** 目標の姿勢を、ヘッダが地面に潜らない範囲に収める（§14.3、M2）。 */
 function clampTarget() {
-  headerMin = minHeaderAngle(target);
+  headerMin = minHeaderAngle(target, active());
   if (target.headerAngle < headerMin) target.headerAngle = headerMin;
 }
 
@@ -210,9 +220,68 @@ function renderHarvest() {
     })
     .join('');
   harvestEl.innerHTML =
+    (headerType === 'corn' ? '<p class="note-corn">いまはコーンヘッドです。小麦のチェック（W-1〜W-6）はドレーパーヘッダが前提なので、参考値として見てください。</p>' : '') +
     `<ul>${checks}</ul>` +
     `<table aria-label="段ごとの負荷率"><tr><td colspan="4" style="border-top:0;color:var(--muted)">段ごとの負荷率（地速 ${v.toFixed(1)} km/h）と、能力いっぱいになる地速</td></tr>${rows}</table>` +
     `<div class="sum">刈高さ <b>${(r.cut * 100).toFixed(0)} cm</b> · 最大速度 <b>${r.maxSpeed.toFixed(1)} km/h</b>（${r.bottleneck.name}）· タンク満杯 <b>${r.fillMinutes.toFixed(0)} 分</b></div>`;
+}
+
+// ---------- header type (M5) ----------
+function setHeader(h: HeaderType) {
+  headerType = h;
+  view.headerKind = h === 'corn' ? 'コーン（12 条）' : 'ドレーパー（小麦）';
+  if (h === 'corn') flow.clear();
+  applyView();
+  clampTarget();
+  runCheck();
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+}
+
+// ---------- labels (design §8.1、R-31) ----------
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.className = 'labels';
+labelRenderer.domElement.hidden = true;
+document.body.appendChild(labelRenderer.domElement);
+const labelRoot = new Group();
+labelRoot.visible = false;
+scene.add(labelRoot);
+const LABEL_IDS = [
+  'header.reel', 'header.cutterbar', 'corn.snout6', 'corn.auger', 'feeder.housing', 'cab', 'tank', 'unload.tube', 'engine',
+  'thresher.rotor', 'thresher.cage', 'shoe.fan', 'shoe.chaffer', 'shoe.sieve', 'grain.elevator', 'residue.chopper', 'residue.spreaderL', 'wheel.frontL',
+];
+const labels = LABEL_IDS.filter((id) => byId.has(id)).map((id) => {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'label';
+  el.textContent = byId.get(id)!.name;
+  el.addEventListener('click', () => showInfo(id));
+  const obj = new CSS2DObject(el);
+  labelRoot.add(obj);
+  return { id, obj, el };
+});
+const labelRay = new Raycaster();
+let lastLabel = 0;
+function updateLabels(now: number) {
+  if (!view.labels || now - lastLabel < 300) return;
+  lastLabel = now;
+  const box = new Box3();
+  for (const l of labels) {
+    const proxy = model.proxies.get(l.id)!;
+    const part = byId.get(l.id)!;
+    const shown = (!part.variant || part.variant === headerType) && (view.header || !HEADER_MOUNTS.has(part.mount));
+    l.obj.visible = shown;
+    if (!shown) continue;
+    box.setFromObject(proxy);
+    box.getCenter(l.obj.position);
+    // 奥に隠れている部品のラベルは薄くする（カメラから部品の中心までの間に、ほかの部品があるか）
+    const dir = l.obj.position.clone().sub(camera.position);
+    const dist = dir.length();
+    labelRay.set(camera.position, dir.normalize());
+    labelRay.far = dist;
+    const hit = labelRay.intersectObject(model.root, true).find((h) => isDrawn(h.object) && h.object.userData.partId !== l.id && h.distance < dist - 0.3);
+    l.el.classList.toggle('behind', !!hit);
+  }
 }
 
 // ---------- picking ----------
@@ -252,6 +321,7 @@ function showInfo(id: string | null) {
   infoEl.hidden = false;
   infoEl.innerHTML = `
     <div class="name">${p.name}</div>
+    <p class="desc">${describePart(p.id) ?? ''}</p>
     <dl>
       <dt>ID</dt><dd>${p.id}</dd>
       <dt>部品群</dt><dd>${GROUP_NAMES[p.group]}</dd>
@@ -339,7 +409,9 @@ for (const k of Object.keys(presetsPose) as Array<keyof typeof presetsPose>) fPr
 
 const fView = gui.addFolder('表示');
 fView.add(view, 'mode', ['外観', 'X線', '断面']).name('モード').onChange(() => setMode(view.mode));
+fView.add(view, 'headerKind', ['ドレーパー（小麦）', 'コーン（12 条）']).name('ヘッダ').onChange(() => setHeader(view.headerKind === 'コーン（12 条）' ? 'corn' : 'draper'));
 fView.add(view, 'shape', ['詳細', '検査用ブロック']).name('形状').onChange(applyView);
+fView.add(view, 'labels').name('名称ラベル').onChange(() => { labelRoot.visible = view.labels; labelRenderer.domElement.hidden = !view.labels; applyView(); });
 fView.add(view, 'explode', 0, 1, 0.01).name('分解').onChange(() => { model.setExplode(view.explode); runCheck(); applyView(); });
 fView.add(view, 'header').name('ヘッダを表示').onChange(() => { applyView(); runCheck(); });
 fView.add(view, 'grid').name('1 m グリッド').onChange(applyView);
@@ -366,6 +438,7 @@ function flowReadout(): string {
 
 // ---------- loop ----------
 window.addEventListener('resize', () => {
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -418,6 +491,7 @@ renderer.setAnimationLoop((now) => {
   animator.update(dt, ts, rates);
   if (view.flow && view.explode === 0) {
     flow.update(dt * ts, {
+      intake: headerType === 'draper',
       pose,
       engineOn: machine.engineOn,
       headerOn: machine.headerOn,
@@ -443,6 +517,10 @@ renderer.setAnimationLoop((now) => {
   }
   controls.update();
   renderer.render(scene, camera);
+  if (view.labels) {
+    updateLabels(now);
+    labelRenderer.render(scene, camera);
+  }
 });
 
 // e2e テスト用の参照（本番動作には使わない）
@@ -458,6 +536,8 @@ renderer.setAnimationLoop((now) => {
   get harvest() { return report; },
   get flow() { return flow.stats(); },
   setTankMass: (kg: number) => flow.setTankMass(kg),
+  setHeader,
+  setLabels: (on: boolean) => { view.labels = on; labelRoot.visible = on; labelRenderer.domElement.hidden = !on; applyView(); },
   get blurred() { return [...animator.blurred]; },
   phaseOf: (k: Parameters<typeof animator.phaseOf>[0]) => animator.phaseOf(k),
   info: () => renderer.info.render,

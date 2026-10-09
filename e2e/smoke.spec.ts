@@ -13,6 +13,8 @@ type Api = {
   setExplode(f: number): void;
   flow: { count: Record<string, number>; tankMass: number; cutting: boolean };
   setTankMass(kg: number): void;
+  setHeader(h: 'draper' | 'corn'): void;
+  setLabels(on: boolean): void;
   harvest: { maxSpeed: number; checks: Array<{ id: string; ok: boolean }> } | null;
 };
 
@@ -123,6 +125,24 @@ test('作物フロー：刈り取り中は粒子が流れ、タンクに穀粒�
   await page.evaluate(() => { const c = (window as unknown as { __combine: Api }).__combine; c.setMachine({ timeScale: 0.1 }); c.setMode('断面'); });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: 'test-results/m4-flow-section.png' });
+  expect(errors).toEqual([]);
+});
+
+test('M5：コーンヘッドに切り替えても干渉 0 件、ラベルから説明パネルが開く', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto('/');
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  await page.evaluate(() => { const c = (window as unknown as { __combine: Api }).__combine; c.setHeader('corn'); c.setLabels(true); c.setCamera('斜め前'); });
+  await expect(page.locator('#check .badge')).toHaveText('干渉 0 件');
+  await expect(page.locator('.labels .label', { hasText: 'クロスオーガ' })).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'test-results/m5-corn.png' });
+  const info = await page.evaluate(() => (window as unknown as { __combine: Api }).__combine.info());
+  expect(info.calls).toBeLessThanOrEqual(250);
+  await page.locator('.labels .label', { hasText: 'ロータ' }).first().click();
+  await expect(page.locator('#info .desc')).toContainText('脱穀');
   expect(errors).toEqual([]);
 });
 

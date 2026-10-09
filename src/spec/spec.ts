@@ -58,6 +58,20 @@ export const spec = {
     reelArm: { pivot: [3.32, 1.25] as const, t: 0.06, z: [5.95, 6.01] as const },
     reel: { x: 5.1, y: 1.05, radius: 0.535, halfLength: 5.9, liftRange: [-0.22, 0.4] as const, slideRange: [-0.3, 0.3] as const },
   },
+  /** コーンヘッド 12 条・30 in（01 §3：JD C12R・Case IH 4400 系）。背板面 x = 3.20 にフェースで掛ける */
+  cornHead: {
+    rows: 12,
+    rowSpacing: 0.762, // 30 in
+    back: { x: [3.2, 3.32] as const, y: [0.25, 1.15] as const },
+    trough: { x: [3.32, 3.95] as const, y: [0.25, 0.4] as const },
+    auger: { x: 3.62, y: 0.62, radius: 0.2 }, // クロスオーガ φ0.40（01 §3）
+    // 分草ポイント（スナウト）：中心線の後端と先端、厚み、半幅。先端が低い（作業時の先端下面 約 0.14 m）
+    snout: { rear: [4.3, 0.52] as const, tip: [6.2, 0.24] as const, t: 0.2, halfWidth: 0.14 },
+    rowUnit: { x: [3.95, 5.0] as const, y: [0.36, 0.56] as const, halfWidth: 0.12 },
+    snapRollRpm: 1058, // ストークロール（01 §3）
+    chainSpeed: 1.8, // m/s（ギャザリングチェーン、01 §3）
+    augerRpm: 200, // 推定
+  },
   thresher: {
     rotor: { front: [0.4, 1.85] as const, length: 3.1, slopeDeg: 3, tipRadius: 0.38, coreRadius: 0.325 },
     impellerLength: 0.5,
