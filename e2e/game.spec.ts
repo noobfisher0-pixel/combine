@@ -85,6 +85,49 @@ test('ゲーム G2：マップを選ぶと説明とボットの目安が出て�
   expect(errors).toEqual([]);
 });
 
+test('ゲーム G3：キーの割り当て、ミニマップ、ガイドライン、ベスト記録と共有', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 400)); });
+  await page.goto('/game/game.html?q=low');
+  await page.locator('input[name=map][value=standard]').check();
+  await expect(page.locator('#bestInfo')).toContainText('記録はまだ');
+  // 加速を I キーに割り当てる
+  await page.locator('#start .settingsBtn').click();
+  await page.locator('#bindList button[data-act=up]').click();
+  await expect(page.locator('#bindList button[data-act=up]')).toContainText('キーを押す');
+  await page.keyboard.press('KeyI');
+  await expect(page.locator('#bindList')).toContainText('I');
+  await page.locator('#settingsClose').click();
+  await expect(page.locator('#keyList')).toContainText('I / ↑');
+  await page.locator('#startBtn').click();
+  await page.keyboard.press('Space');
+  await page.keyboard.down('KeyI');
+  await page.waitForFunction(() => (window as unknown as { __game: { sim: { combine: { vTarget: number } } } }).__game.sim.combine.vTarget > 2, undefined, { timeout: 120_000 });
+  await page.keyboard.up('KeyI');
+  // ミニマップに描かれている（中央付近の画素が透明でない）、Tab で拡大
+  const alpha = await page.evaluate(() => {
+    const c = document.getElementById('miniCanvas') as HTMLCanvasElement;
+    return c.getContext('2d')!.getImageData(c.width / 2, c.height / 2, 1, 1).data[3];
+  });
+  expect(alpha).toBe(255);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#mini')).toHaveClass(/big/);
+  await page.keyboard.press('Tab');
+  // ガイドライン（ふつうでは表示）
+  await page.waitForFunction(() => (window as unknown as { __game: { guide: unknown } }).__game.guide !== null, undefined, { timeout: 60_000 });
+  await page.screenshot({ path: 'test-results/game-g3.png' });
+  // 時間切れまで → ベスト更新と共有の文字列 → タイトルにベストが出る
+  await page.evaluate(() => (window as unknown as { __game: Game }).__game.fastForward(60 * 60 * 5));
+  await expect(page.locator('#result')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('#bestResult')).toContainText('ベスト更新');
+  await expect(page.locator('#shareText')).toHaveValue(/v\d+-normal-standard [0-9.]+ t/);
+  await page.locator('#titleBtn').click();
+  await expect(page.locator('#bestInfo')).toContainText('あなたのベスト');
+  expect(errors).toEqual([]);
+});
+
 test('ゲーム：チュートリアルが始まり、手順の案内が出る', async ({ page }) => {
   await page.goto('/game/game.html?q=low');
   await page.locator('#tutBtn').click();

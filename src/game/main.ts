@@ -15,6 +15,7 @@ import {
   SphereGeometry,
   Line,
   LineBasicMaterial,
+  LineDashedMaterial,
   DirectionalLight,
   Fog,
   Group,
@@ -44,6 +45,9 @@ import { BALANCE, REAL_DT, type Difficulty } from './balance';
 import { dailySeed, generateMap, planMap, SHAPE_NAMES, standardMap, standardPlan, type GameMap } from './map';
 import BotWorker from './worker?worker&inline';
 import { runBot } from './bot';
+import { computeGuide, standingBox, type Guide } from './guide';
+import { ACTION_NAMES, ACTIONS, bestKey, bindKey, DEFAULT_KEYS, keyLabel, loadBest, loadKeys, loadOptions, recordBest, saveKeys, saveOptions, shareText, type Action } from './settings';
+import { Minimap } from './ui/minimap';
 import type { BotReply, BotRequest } from './worker';
 import { KEY } from './sim/combine';
 import { GameSim, type GameEvent } from './sim/game';
@@ -108,6 +112,12 @@ const flag = new Group();
   flag.add(pole, cloth);
 }
 let lastPath: unknown = null;
+// ガイドライン（圃場座標の地面の点線）
+const guideLine = new Line(new BufferGeometry(), new LineDashedMaterial({ color: 0xf2f4ef, dashSize: 1.5, gapSize: 1, transparent: true, opacity: 0.8 }));
+guideLine.frustumCulled = false;
+let guide: Guide | null = null;
+let lastGuide = -Infinity;
+let blockers: Array<[number, number]> = [];
 
 /** マップの選び方（タイトル画面）。ランダムは選んだときにシードを決めて、共有できるようにする */
 type MapChoice = { standard: boolean; seed: string };
@@ -119,7 +129,10 @@ function newRound() {
   if (fieldView) scene.remove(fieldView.root);
   fieldView = new FieldView(map.field, { headland: map.headland });
   fieldView.setQuality(quality);
-  fieldView.root.add(buildProps(map), cartModel, pathLine, flag);
+  fieldView.root.add(buildProps(map), cartModel, pathLine, flag, guideLine);
+  guide = null;
+  lastGuide = -Infinity;
+  blockers = [];
   scene.add(fieldView.root);
   flow.clear();
   camPsi = sim.combine.psi;
@@ -230,24 +243,62 @@ function buildProps(m: GameMap): Group {
   return g;
 }
 
-// ---------- input ----------
+// ---------- input（キーの割り当ては settings.ts、§3） ----------
+let keymap = loadKeys();
+let options = loadOptions();
+if (new URLSearchParams(location.search).get('q') !== 'low') quality = options.quality;
 const held = new Set<string>();
 let edges = 0;
-const CODE: Record<string, number> = {
-  KeyW: KEY.up, ArrowUp: KEY.up, KeyS: KEY.down, ArrowDown: KEY.down,
-  KeyA: KEY.left, ArrowLeft: KEY.left, KeyD: KEY.right, ArrowRight: KEY.right,
-};
-const EDGE: Record<string, number> = { Space: KEY.header, KeyQ: KEY.auger, KeyF: KEY.hold, KeyE: KEY.cart };
+/** 押している間だけ効くキー（矢印キーはいつでも使える）と、押した瞬間に切り替えるキー */
+let CODE: Record<string, number> = {};
+let EDGE: Record<string, number> = {};
+function rebuildKeyMaps() {
+  CODE = { ArrowUp: KEY.up, ArrowDown: KEY.down, ArrowLeft: KEY.left, ArrowRight: KEY.right };
+  CODE[keymap.up] = KEY.up;
+  CODE[keymap.down] = KEY.down;
+  CODE[keymap.left] = KEY.left;
+  CODE[keymap.right] = KEY.right;
+  EDGE = { [keymap.header]: KEY.header, [keymap.auger]: KEY.auger, [keymap.hold]: KEY.hold, [keymap.cart]: KEY.cart };
+}
+rebuildKeyMaps();
+/** 割り当ての変更中の操作（次に押したキーを割り当てる） */
+let binding: Action | null = null;
 window.addEventListener('keydown', (e) => {
+  if (binding) {
+    e.preventDefault();
+    if (e.code !== 'Escape' && bindKey(keymap, binding, e.code)) {
+      saveKeys(keymap);
+      rebuildKeyMaps();
+    }
+    binding = null;
+    renderSettings();
+    renderKeyList();
+    return;
+  }
+  if (e.code === 'Escape') {
+    if (!settingsEl.hidden) return closeSettings();
+    return setPaused(!paused);
+  }
+  if (!settingsEl.hidden) return;
   if (e.code === 'Enter' && !started) return start();
-  if (e.code === 'KeyE' && e.shiftKey && !e.repeat) {
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    $('mini').classList.toggle('big');
+    return;
+  }
+  if (e.code === 'KeyR' && paused) return retry();
+  if (e.code === keymap.camera && !e.repeat) return cycleCamera();
+  if (e.code === keymap.guide && !e.repeat) {
+    options.guide = !options.guide;
+    saveOptions(options);
+    toast(`ガイドライン：${options.guide ? '表示' : '非表示'}`);
+    return;
+  }
+  if (e.code === keymap.cart && e.shiftKey && !e.repeat) {
     held.add(e.code);
     edges |= KEY.cart | KEY.cartForce;
     return;
   }
-  if (e.code === 'Escape') return setPaused(!paused);
-  if (e.code === 'KeyR' && paused) return retry();
-  if (e.code === 'KeyC' && !e.repeat) return cycleCamera();
   if (CODE[e.code] !== undefined || EDGE[e.code] !== undefined) e.preventDefault();
   if (e.repeat) return;
   held.add(e.code);
@@ -258,9 +309,21 @@ window.addEventListener('blur', () => {
   held.clear();
   if (started && !sim.over) setPaused(true);
 });
+/** マウスで操舵：画面の左右の位置で目標の切れ角（端で ±32°）。ハンドルのキーを押す・離すで合わせる */
+let mouseSteer: number | null = null;
+window.addEventListener('mousemove', (e) => {
+  if (!options.mouseSteer) return;
+  const t = (e.clientX - window.innerWidth / 2) / (window.innerWidth * 0.4);
+  mouseSteer = Math.max(-1, Math.min(1, t)) * spec.wheels.steerMax;
+});
 function keysNow(): number {
   let k = edges;
   for (const c of held) k |= CODE[c] ?? 0;
+  if (options.mouseSteer && mouseSteer !== null && !(k & (KEY.left | KEY.right))) {
+    const d = mouseSteer - sim.combine.steer;
+    if (d > 0.7) k |= KEY.right;
+    else if (d < -0.7) k |= KEY.left;
+  }
   return k;
 }
 
@@ -390,6 +453,27 @@ function renderHud() {
   }
 }
 
+// ---------- ガイドライン・ミニマップ（§7.1） ----------
+const minimap = new Minimap($('miniCanvas') as HTMLCanvasElement);
+function guideOn(): boolean {
+  return options.guide && difficulty !== 'hard';
+}
+function updateGuide(now: number) {
+  if (now - lastGuide < 500) return;
+  lastGuide = now;
+  guide = guideOn() ? computeGuide(standingBox(map.field), sim.place) : null;
+  if (guide) {
+    const pts = [guide.a, guide.b, ...guide.loop];
+    guideLine.geometry.setAttribute('position', new Float32BufferAttribute(pts.flatMap(([x, z]) => [x, 0.08, z]), 3));
+    guideLine.geometry.computeBoundingSphere();
+    guideLine.computeLineDistances();
+  }
+  guideLine.visible = !!guide;
+  // カートが待っている・向かっているときは、通り道をふさいでいる株を出す
+  const c = sim.cart;
+  blockers = c.state === 'waiting' || (c.state === 'toCombine' && !c.laneOk(c.target(sim.combineView, 0))) ? c.laneBlockers(sim.combineView) : [];
+}
+
 function spoutField(): [number, number] {
   const p = sim.place;
   const c = Math.cos(p.psi);
@@ -418,6 +502,15 @@ function showResult() {
     ['衝突', `${sim.collisions} 回`],
   ];
   $('resultStats').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  // ベスト記録（チュートリアルは数えない）と共有用の文字列
+  if (!tutorial) {
+    const key = bestKey(difficulty, mapChoice.seed, mapChoice.standard);
+    const { improved, prev } = recordBest(key, { score: sim.truck, rank: sim.rank, date: new Date().toISOString() });
+    $('bestResult').textContent = improved
+      ? `ベスト更新！${prev ? `（前回 ${t1(prev.score)} t・${prev.rank}）` : '（このマップで初めての記録）'}`
+      : `このマップのベスト ${t1(prev!.score)} t（${prev!.rank}）`;
+  } else $('bestResult').textContent = '';
+  ($('shareText') as HTMLInputElement).value = shareText(difficulty, mapChoice.seed, mapChoice.standard, sim.truck, sim.rank);
   resultEl.hidden = false;
 }
 
@@ -488,6 +581,8 @@ function updateMapInfo() {
   ].filter(Boolean).join('・');
   const key = mapKey(mapChoice, d);
   const ref = botCache.get(key);
+  const best = loadBest(bestKey(d, mapChoice.seed, mapChoice.standard));
+  $('bestInfo').textContent = best ? `このマップのあなたのベスト：${t1(best.score)} t（${best.rank}、${best.date.slice(0, 10)}）` : 'このマップの記録はまだありません';
   $('mapInfo').textContent =
     `${mapChoice.standard ? '標準マップ' : `シード「${mapChoice.seed}」`}：${SHAPE_NAMES[p.shape]}、${p.length} m × ${p.width} m（${(p.area / 10000).toFixed(2)} ha）` +
     (extras ? `、${extras}` : '') +
@@ -555,15 +650,87 @@ $('titleBtn').addEventListener('click', () => {
   started = false;
   resultEl.hidden = true;
   startEl.hidden = false;
+  updateMapInfo(); // ベスト記録の表示を新しくする
 });
 $('resumeBtn').addEventListener('click', () => setPaused(false));
 $('retryBtn').addEventListener('click', retry);
 $('againBtn').addEventListener('click', () => newRound());
-$('qualityBtn').addEventListener('click', () => {
-  quality = quality === 'high' ? 'low' : 'high';
-  fieldView?.setQuality(quality);
-  $('qualityBtn').textContent = `小麦の描画：${quality === 'high' ? '詳細' : '軽量'}`;
+$('shareBtn').addEventListener('click', async () => {
+  const input = $('shareText') as HTMLInputElement;
+  try {
+    await navigator.clipboard.writeText(input.value);
+    toast('結果をコピーしました');
+  } catch {
+    input.select();
+    toast('選んだ文字をコピーしてください（Ctrl＋C）');
+  }
 });
+
+// ---------- 設定（キーの割り当て・表示） ----------
+const settingsEl = $('settings');
+function renderSettings() {
+  $('bindList').innerHTML = ACTIONS.map((a) => `<kbd>${keyLabel(keymap[a])}</kbd><span>${ACTION_NAMES[a]}<button type="button" data-act="${a}" class="${binding === a ? 'wait' : ''}">${binding === a ? 'キーを押す…' : '変更'}</button></span>`).join('');
+  ($('optGuide') as HTMLInputElement).checked = options.guide;
+  ($('optMouse') as HTMLInputElement).checked = options.mouseSteer;
+  ($('optLow') as HTMLInputElement).checked = quality === 'low';
+}
+/** タイトル画面の操作説明（今の割り当てで） */
+function renderKeyList() {
+  const k = (a: Action) => `<kbd>${keyLabel(keymap[a])}</kbd>`;
+  const rows: Array<[string, string]> = [
+    [`${keyLabel(keymap.up)} / ↑`, '加速（短く押すと +0.25 km/h、長押しで連続）'],
+    [`${keyLabel(keymap.down)} / ↓`, '減速。止まってから、いったん離してもう一度押すと後退'],
+    [`${keyLabel(keymap.left)} ${keyLabel(keymap.right)} / ← →`, 'ハンドル（後輪操舵。後ろが外へ振れます）'],
+  ];
+  $('keyList').innerHTML =
+    rows.map(([a, b]) => `<kbd>${a}</kbd><span>${b}</span>`).join('') +
+    `${k('header')}<span>ヘッダを上げる／下げる（下げて走ると刈る）</span>` +
+    `${k('hold')}<span>負荷ホールド（脱穀部の負荷 95 % を保つ速さに自動で合わせる）</span>` +
+    `${k('cart')}<span>カートを呼ぶ／帰す（Shift と一緒に押すと強行呼び出し。小麦を踏み倒して来る）</span>` +
+    `${k('auger')}<span>排出オーガを出す／しまう（カートが横にいるときだけ流れる）</span>` +
+    `${k('camera')}<span>カメラの切り替え（追従・高い追従・真上・自由）</span>` +
+    `${k('guide')}<span>ガイドライン（回り刈りの次の線）の表示</span>` +
+    `<kbd>Tab</kbd><span>ミニマップの拡大</span><kbd>Esc</kbd><span>一時停止</span>`;
+}
+function openSettings() {
+  renderSettings();
+  settingsEl.hidden = false;
+}
+function closeSettings() {
+  binding = null;
+  settingsEl.hidden = true;
+}
+for (const b of document.querySelectorAll('.settingsBtn')) b.addEventListener('click', openSettings);
+$('settingsClose').addEventListener('click', closeSettings);
+$('keysReset').addEventListener('click', () => {
+  keymap = { ...DEFAULT_KEYS };
+  saveKeys(keymap);
+  rebuildKeyMaps();
+  renderSettings();
+  renderKeyList();
+});
+$('bindList').addEventListener('click', (e) => {
+  const act = (e.target as HTMLElement).dataset?.act as Action | undefined;
+  if (!act) return;
+  binding = act;
+  renderSettings();
+});
+$('optGuide').addEventListener('change', (e) => {
+  options.guide = (e.target as HTMLInputElement).checked;
+  saveOptions(options);
+});
+$('optMouse').addEventListener('change', (e) => {
+  options.mouseSteer = (e.target as HTMLInputElement).checked;
+  mouseSteer = null;
+  saveOptions(options);
+});
+$('optLow').addEventListener('change', (e) => {
+  quality = (e.target as HTMLInputElement).checked ? 'low' : 'high';
+  options.quality = quality;
+  saveOptions(options);
+  fieldView?.setQuality(quality);
+});
+renderKeyList();
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -614,6 +781,8 @@ renderer.setAnimationLoop((now) => {
   const h = sim.harvest;
   fieldView!.update({ place: sim.place, knifeX: h.knifeX, knifeY: h.knifeY, headerDown: sim.headerDown, pose: sim.pose }, camera.getWorldPosition(tmpVec), elapsed);
   updateCamera(dt);
+  updateGuide(now);
+  minimap.draw(sim, now, guide, blockers);
   renderHud();
   renderer.render(scene, camera);
 });
@@ -627,6 +796,8 @@ renderer.setAnimationLoop((now) => {
   /** キーを押したままにする（e2e 用） */
   press: (code: string, on: boolean) => { if (on) { held.add(code); if (EDGE[code] !== undefined) edges |= EDGE[code]; } else held.delete(code); },
   setQuality: (q: 'high' | 'low') => { quality = q; fieldView?.setQuality(q); },
+  get guide() { return guide; },
+  get keymap() { return { ...keymap }; },
   /** 描かずに n 刻み進める（e2e 用。keys は毎刻みの入力） */
   fastForward: (n: number, keys = 0) => {
     for (let i = 0; i < n && !sim.over; i++) {

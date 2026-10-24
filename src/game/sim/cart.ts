@@ -167,6 +167,23 @@ export class Cart {
     return true;
   }
 
+  /** 並走の位置で通り道をふさいでいる格子の中心（ミニマップで赤く出す、G-R-06） */
+  laneBlockers(c: CombineView): Array<[number, number]> {
+    const t = this.target(c, 0);
+    const g = this.grid;
+    const out = new Map<number, [number, number]>();
+    for (let a = CART_RECT.x0; a <= CART_RECT.x1; a += 1) {
+      for (let b = CART_RECT.z0; b <= CART_RECT.z1; b += 0.8) {
+        const [X, Z] = toField(t, a, b);
+        const [i, k] = g.cellOf(X, Z);
+        if (!g.inside(i, k)) continue;
+        const j = g.idx(i, k);
+        if (g.raw[j] === 1 || g.raw[j] === 2) out.set(j, g.center(i, k));
+      }
+    }
+    return [...out.values()];
+  }
+
   /** 今の行程の出口：コンバインの前方で作物の範囲を出た点の 8 m 先の、左側（スパウトの側） */
   private exitPoint(c: CombineView): [number, number] {
     const pl = c.place;

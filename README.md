@@ -9,7 +9,7 @@ Node.js 22 で確認しています。
 ```sh
 npm install          # .npmrc で legacy-peer-deps を有効にしています
 npm run dev          # 3D モデルを http://localhost:5173 で表示
-npm run dev:game     # 収穫ゲーム（G2：自動生成のマップ・ボットの目安）を http://localhost:5173/game.html で表示
+npm run dev:game     # 収穫ゲーム（G3：ミニマップ・ガイドライン・ベスト記録・キーの割り当て）を http://localhost:5173/game.html で表示
 npm test             # spec の干渉・外形・不変条件の自動検査（Vitest）
 npm run test:e2e     # ブラウザでの表示確認（Playwright）
 npm run build        # 型チェック＋本番ビルド（dist/、ゲームは dist/game/）

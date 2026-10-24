@@ -67,6 +67,13 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 .win svg{display:block;width:100%;height:40px}
 .rank{font:700 44px/1 var(--f-num);color:var(--accent);margin-right:10px}
 .res-head{display:flex;align-items:center;gap:6px;margin:4px 0 6px}
+.mini{top:12px;right:12px;padding:6px}
+.mini canvas{display:block;width:240px;height:190px;border-radius:4px}
+.mini.big canvas{width:min(560px,calc(100vw - 48px));height:auto}
+.mini .note{font-size:10.5px;margin-top:3px;max-width:240px}
+.mini.big .note{max-width:none}
+.keys button{font:600 11px var(--f-ui);padding:2px 8px;margin:0 0 0 6px;background:#26302e;color:var(--ink);border:1px solid var(--line)}
+.keys button.wait{border-color:var(--warn);color:var(--warn)}
 </style>
 </head>
 <body>
@@ -100,22 +107,13 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 </section>
 
 <div class="toast" id="toast" hidden></div>
+<section class="hud mini" id="mini" aria-label="ミニマップ（Tab で拡大）"><canvas id="miniCanvas" width="240" height="190"></canvas><div class="note">Tab で拡大 ・ 濃い金色ほど収量が高い ・ 赤＝カートの通り道をふさぐ株</div></section>
 
 <div class="overlay" id="start">
   <div class="card">
-    <h1>コンバイン収穫ゲーム <span class="tag">G1 試作</span></h1>
+    <h1>コンバイン収穫ゲーム <span class="tag">G3 試作</span></h1>
     <p>制限時間のあいだに小麦を刈り、グレインカートで畑の端のトラックへ運びます。<b>トラックに入った量が得点</b>です。</p>
-    <div class="keys">
-      <kbd>W / ↑</kbd><span>加速（短く押すと +0.25 km/h、長押しで連続）</span>
-      <kbd>S / ↓</kbd><span>減速。止まってから、いったん離してもう一度押すと後退</span>
-      <kbd>A D / ← →</kbd><span>ハンドル（後輪操舵。後ろが外へ振れます）</span>
-      <kbd>Space</kbd><span>ヘッダを上げる／下げる（下げて走ると刈る）</span>
-      <kbd>F</kbd><span>負荷ホールド（脱穀部の負荷 95 % を保つ速さに自動で合わせる）</span>
-      <kbd>E</kbd><span>カートを呼ぶ／帰す（Shift＋E：強行呼び出し。小麦を踏み倒して来る）</span>
-      <kbd>Q</kbd><span>排出オーガを出す／しまう（カートが横にいるときだけ流れる）</span>
-      <kbd>C</kbd><span>カメラの切り替え（追従・高い追従・真上・自由）</span>
-      <kbd>Esc</kbd><span>一時停止</span>
-    </div>
+    <div class="keys" id="keyList"></div>
     <p class="note">負荷が 100 % を超えると取りこぼしが急に増えます。タンクが満杯の間に届いた小麦は失われます。カートは刈った跡しか走れず、排出は左側です。左側が刈り跡になるように回りましょう。</p>
     <div class="diff" role="radiogroup" aria-label="難易度">
       <label><input type="radio" name="diff" value="easy">かんたん<small>5 分。70 % で自動でカートを呼ぶ</small></label>
@@ -129,8 +127,10 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
       <label><input type="radio" name="map" value="random">ランダム<small>毎回ちがう畑</small></label>
     </div>
     <p class="note" id="mapInfo" aria-live="polite"></p>
+    <p class="note" id="bestInfo"></p>
     <button id="startBtn">開始（Enter）</button>
     <button class="sub" id="tutBtn">チュートリアル</button>
+    <button class="sub settingsBtn">設定・キーの割り当て</button>
   </div>
 </div>
 
@@ -139,7 +139,22 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
     <h2>一時停止</h2>
     <button id="resumeBtn">続ける（Esc）</button>
     <button class="sub" id="retryBtn">やり直し（R）</button>
-    <button class="sub" id="qualityBtn">小麦の描画：詳細</button>
+    <button class="sub settingsBtn">設定・キーの割り当て</button>
+  </div>
+</div>
+
+<div class="overlay" id="settings" hidden>
+  <div class="card">
+    <h2>設定</h2>
+    <p class="note">「変更」を押してから、割り当てたいキーを押してください。ほかの操作に使っているキーなら入れ替えます。Esc・R・Tab・Enter・Shift は割り当てられません。矢印キーはいつでも運転に使えます。</p>
+    <div class="keys" id="bindList"></div>
+    <div class="stats" style="grid-template-columns:auto 1fr">
+      <label><input type="checkbox" id="optGuide"> ガイドライン（回り刈りの次の線）</label><span></span>
+      <label><input type="checkbox" id="optMouse"> マウスで操舵（画面の左右の位置で切れ角）</label><span></span>
+      <label><input type="checkbox" id="optLow"> 小麦を描かない（軽量表示）</label><span></span>
+    </div>
+    <button id="settingsClose">閉じる</button>
+    <button class="sub" id="keysReset">キーを元に戻す</button>
   </div>
 </div>
 
@@ -148,8 +163,11 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
     <h2 id="resultTitle">時間切れ</h2>
     <div class="res-head"><span class="rank" id="resultRank">C</span><div><div class="big" id="resultScore">0.0 t</div><div class="note" id="resultRatio"></div><div class="note" id="resultMap"></div></div></div>
     <dl class="stats" id="resultStats"></dl>
-    <p class="note">ランクは理論上の上限（脱穀部の能力いっぱいで刈り続け、全部をトラックへ運べた量）に対する割合で決まります。しきい値は仮の値です。</p>
+    <p class="note" id="bestResult"></p>
+    <p class="note">ランクは理論上の上限（脱穀部の能力いっぱいで刈り続け、全部をトラックへ運べた量）に対する割合で決まります（S 85 %・A 70 %・B 55 % 以上）。</p>
+    <p class="note"><input id="shareText" type="text" readonly style="width:100%;font:12px var(--f-num);background:#26302e;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:4px"></p>
     <button id="againBtn">同じ条件でもう一度</button>
+    <button class="sub" id="shareBtn">結果をコピー</button>
     <button class="sub" id="titleBtn">タイトルへ</button>
   </div>
 </div>
