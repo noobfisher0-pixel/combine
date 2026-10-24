@@ -54,6 +54,19 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 .stats{display:grid;grid-template-columns:1fr auto;gap:3px 16px;margin:12px 0;font-variant-numeric:tabular-nums}
 .stats dt{color:var(--muted)} .stats dd{margin:0;font-family:var(--f-num);text-align:right}
 .note{font-size:12px;color:var(--muted)}
+.diff{display:flex;gap:8px;margin:10px 0}
+.diff label{flex:1;border:1px solid var(--line);border-radius:6px;padding:8px 10px;cursor:pointer;font-size:13px}
+.diff label:has(input:checked){border-color:var(--accent);background:rgba(92,179,173,.12)}
+.diff input{margin:0 6px 0 0}
+.diff small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+.tut{top:96px;left:12px;width:min(330px,calc(100vw - 24px))}
+.tut h3{margin:0 0 4px;font-size:12px;color:var(--accent);letter-spacing:.06em}
+.tut p{margin:0;font-size:13.5px}
+.tut .step{font:600 11px var(--f-num);color:var(--muted)}
+.win{display:block;margin-top:6px}
+.win svg{display:block;width:100%;height:40px}
+.rank{font:700 44px/1 var(--f-num);color:var(--accent);margin-right:10px}
+.res-head{display:flex;align-items:center;gap:6px;margin:4px 0 6px}
 </style>
 </head>
 <body>
@@ -62,6 +75,11 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 <section class="hud top" aria-live="off">
   <div><span class="k">残り時間</span><span class="v" id="time">4:00</span></div>
   <div><span class="k">得点（トラック）</span><span class="v" id="score">0.0<span class="unit">t</span></span></div>
+  <div><span class="k">最後の受け渡しまで</span><span class="v" id="handoff" style="font-size:18px">―</span></div>
+</section>
+<section class="hud tut" id="tut" hidden>
+  <h3>チュートリアル <span class="step" id="tutStep"></span></h3>
+  <p id="tutText"></p>
 </section>
 
 <section class="hud drive">
@@ -76,26 +94,36 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
   <div class="row"><span class="lbl">タンク</span><span><span class="big" id="tank">0.0</span><span class="unit">/ 10.6 t</span></span></div>
   <div class="meter" id="tankMeter" aria-label="タンク"><i class="transit" id="transitBar" style="width:0"></i><i class="fill" id="tankBar" style="width:0"></i></div>
   <div class="row"><span class="note" id="transitTxt">搬送中 0.0 t</span><span class="note" id="lossTxt"></span></div>
-  <div class="row" style="margin-top:6px"><span class="lbl">カート</span><span class="tag">G1 で追加</span></div>
+  <div class="row" style="margin-top:8px"><span class="lbl">カート</span><span id="cartState" class="tag">待機</span></div>
+  <div class="row"><span class="note" id="cartLoad">0.0 / 16.0 t</span><span class="note" id="unloadState"></span></div>
+  <div class="win" aria-label="並走の範囲"><svg viewBox="0 0 200 40" id="winSvg"><rect x="70" y="8" width="60" height="24" rx="3" fill="none" stroke="#5CB3AD" stroke-dasharray="3 3"/><rect id="winCart" x="85" y="12" width="30" height="16" rx="2" fill="#4f6470"/><circle id="winSpout" cx="100" cy="20" r="4" fill="#E0AE4E"/></svg><span class="note">点線＝並走の範囲、灰色＝荷台、黄色＝スパウト</span></div>
 </section>
 
 <div class="toast" id="toast" hidden></div>
 
 <div class="overlay" id="start">
   <div class="card">
-    <h1>コンバイン収穫ゲーム <span class="tag">G0 試作</span></h1>
-    <p>制限時間のあいだに小麦を刈ります。いまは運転と刈り取りだけの試作版です（排出とカートは次の段階で入ります）。</p>
+    <h1>コンバイン収穫ゲーム <span class="tag">G1 試作</span></h1>
+    <p>制限時間のあいだに小麦を刈り、グレインカートで畑の端のトラックへ運びます。<b>トラックに入った量が得点</b>です。</p>
     <div class="keys">
       <kbd>W / ↑</kbd><span>加速（短く押すと +0.25 km/h、長押しで連続）</span>
       <kbd>S / ↓</kbd><span>減速。止まってから、いったん離してもう一度押すと後退</span>
       <kbd>A D / ← →</kbd><span>ハンドル（後輪操舵。後ろが外へ振れます）</span>
       <kbd>Space</kbd><span>ヘッダを上げる／下げる（下げて走ると刈る）</span>
       <kbd>F</kbd><span>負荷ホールド（脱穀部の負荷 95 % を保つ速さに自動で合わせる）</span>
+      <kbd>E</kbd><span>カートを呼ぶ／帰す（Shift＋E：強行呼び出し。小麦を踏み倒して来る）</span>
+      <kbd>Q</kbd><span>排出オーガを出す／しまう（カートが横にいるときだけ流れる）</span>
       <kbd>C</kbd><span>カメラの切り替え（追従・高い追従・真上・自由）</span>
       <kbd>Esc</kbd><span>一時停止</span>
     </div>
-    <p class="note">負荷が 100 % を超えると取りこぼしが急に増えます。タンクが満杯の間に届いた小麦は失われます。</p>
+    <p class="note">負荷が 100 % を超えると取りこぼしが急に増えます。タンクが満杯の間に届いた小麦は失われます。カートは刈った跡しか走れず、排出は左側です。左側が刈り跡になるように回りましょう。</p>
+    <div class="diff" role="radiogroup" aria-label="難易度">
+      <label><input type="radio" name="diff" value="easy">かんたん<small>5 分。70 % で自動でカートを呼ぶ</small></label>
+      <label><input type="radio" name="diff" value="normal" checked>ふつう<small>4 分。満杯で自動停止</small></label>
+      <label><input type="radio" name="diff" value="hard">むずかしい<small>4 分。カートがいないとこぼれる</small></label>
+    </div>
     <button id="startBtn">開始（Enter）</button>
+    <button class="sub" id="tutBtn">チュートリアル</button>
   </div>
 </div>
 
@@ -110,10 +138,12 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 
 <div class="overlay" id="result" hidden>
   <div class="card">
-    <h2>時間切れ</h2>
+    <h2 id="resultTitle">時間切れ</h2>
+    <div class="res-head"><span class="rank" id="resultRank">C</span><div><div class="big" id="resultScore">0.0 t</div><div class="note" id="resultRatio"></div></div></div>
     <dl class="stats" id="resultStats"></dl>
-    <p class="note">G0 の試作のため、得点（トラックに入った量）はまだ数えていません。タンクに入った量を表示しています。</p>
-    <button id="againBtn">もう一度</button>
+    <p class="note">ランクは理論上の上限（脱穀部の能力いっぱいで刈り続け、全部をトラックへ運べた量）に対する割合で決まります。しきい値は仮の値です。</p>
+    <button id="againBtn">同じ条件でもう一度</button>
+    <button class="sub" id="titleBtn">タイトルへ</button>
   </div>
 </div>
 

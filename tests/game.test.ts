@@ -1,7 +1,8 @@
 /**
  * ゲーム G0（docs/game-design.md §10・§11）：決定的な乱数とマップ、運転、刈り取り・取りこぼし・タンク、衝突、決定性。
  */
-import { readFileSync } from 'node:fs';
+import mapSrc from '../src/game/map.ts?raw';
+import randSrc from '../src/game/rand.ts?raw';
 import { describe, expect, it } from 'vitest';
 import { CUT, isStanding } from '../src/field/field';
 import { BALANCE, GAME_DT, REAL_DT } from '../src/game/balance';
@@ -51,8 +52,8 @@ describe('決定的な乱数（G-R-13）', () => {
     expect(Math.abs(f(10, 20))).toBeLessThanOrEqual(1);
   });
   it('マップの生成に Math の三角関数・指数関数を使っていない', () => {
-    for (const file of ['src/game/rand.ts', 'src/game/map.ts']) {
-      const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    for (const [file, text] of [['rand.ts', randSrc], ['map.ts', mapSrc]]) {
+      const src = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
       expect(src, file).not.toMatch(/Math\.(sin|cos|tan|exp|log|pow|atan)/);
     }
   });

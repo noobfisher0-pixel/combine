@@ -420,28 +420,8 @@ export class FieldView {
     return g;
   }
 
-  /** 運搬車（トラクタ＋グレインカート）。スパウトの下を機体と並んで走る */
   private buildCart() {
-    const c = spec.field.cart;
-    const body = new MeshStandardMaterial({ color: 0x4f6470, roughness: 0.6, metalness: 0.2 });
-    const dark = new MeshStandardMaterial({ color: 0x23282a, roughness: 0.9 });
-    const tractorMat = new MeshStandardMaterial({ color: 0x8a8f86, roughness: 0.55, metalness: 0.15 });
-    const glass = new MeshStandardMaterial({ color: 0x2c3a40, roughness: 0.2, metalness: 0.3 });
-    const add = (geo: BufferGeometry, mat: MeshStandardMaterial, x: number, y: number, z: number) => {
-      const m = new Mesh(geo, mat);
-      m.position.set(x, y, z);
-      this.cart.add(m);
-      return m;
-    };
-    // カート：ホッパ（上が広い箱）、車輪 4 本
-    add(new BoxGeometry(5.2, 1.0, c.halfWidth * 1.6), body, 0, 1.45, 0);
-    add(new BoxGeometry(6.0, 1.1, c.halfWidth * 2), body, 0, c.top - 0.55, 0);
-    for (const x of [-1.2, 1.2]) for (const z of [-1, 1]) add(new CylinderGeometry(0.75, 0.75, 0.5, 20).rotateX(Math.PI / 2), dark, x, 0.75, z * (c.halfWidth - 0.15));
-    add(new BoxGeometry(2.4, 0.15, 0.15), dark, 4.0, 0.9, 0);
-    // トラクタ
-    add(new BoxGeometry(2.6, 1.0, 1.1), tractorMat, 6.6, 1.5, 0);
-    add(new BoxGeometry(1.5, 1.4, 1.5), glass, 5.9, 2.65, 0);
-    for (const [x, r] of [[5.5, 0.85], [7.5, 0.55]] as const) for (const z of [-1, 1]) add(new CylinderGeometry(r, r, 0.45, 20).rotateX(Math.PI / 2), dark, x, r, z * 1.0);
+    this.cart.add(buildCartModel());
     this.cart.name = 'grain-cart';
     this.cart.visible = false;
   }
@@ -522,3 +502,37 @@ export class FieldView {
 }
 
 export const FIELD_SKY = new Color(0x9fb3b8);
+
+/**
+ * 運搬車（トラクタ＋グレインカート）の形。荷台の中心が原点、前（トラクタ）が +x。実在の配色は使わない。
+ * 戻り値の userData.grain は荷台の中の穀粒（高さを load で変える）
+ */
+export function buildCartModel(): Group {
+  const g = new Group();
+  const c = spec.field.cart;
+  const body = new MeshStandardMaterial({ color: 0x4f6470, roughness: 0.6, metalness: 0.2 });
+  const dark = new MeshStandardMaterial({ color: 0x23282a, roughness: 0.9 });
+  const tractorMat = new MeshStandardMaterial({ color: 0x8a8f86, roughness: 0.55, metalness: 0.15 });
+  const glass = new MeshStandardMaterial({ color: 0x2c3a40, roughness: 0.2, metalness: 0.3 });
+  const add = (geo: BufferGeometry, mat: MeshStandardMaterial, x: number, y: number, z: number) => {
+    const m = new Mesh(geo, mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  // カート：ホッパ（上が広い箱）、車輪 4 本、けん引棒
+  add(new BoxGeometry(5.2, 1.0, c.halfWidth * 1.6), body, 0, 1.45, 0);
+  add(new BoxGeometry(6.0, 1.1, c.halfWidth * 2), body, 0, c.top - 0.55, 0);
+  for (const x of [-1.2, 1.2]) for (const z of [-1, 1]) add(new CylinderGeometry(0.75, 0.75, 0.5, 20).rotateX(Math.PI / 2), dark, x, 0.75, z * (c.halfWidth - 0.15));
+  add(new BoxGeometry(2.4, 0.15, 0.15), dark, 4.0, 0.9, 0);
+  // トラクタ
+  add(new BoxGeometry(2.6, 1.0, 1.1), tractorMat, 6.6, 1.5, 0);
+  add(new BoxGeometry(1.5, 1.4, 1.5), glass, 5.9, 2.65, 0);
+  for (const [x, r] of [[5.5, 0.85], [7.5, 0.55]] as const) for (const z of [-1, 1]) add(new CylinderGeometry(r, r, 0.45, 20).rotateX(Math.PI / 2), dark, x, r, z * 1.0);
+  // 荷台の中の穀粒（上面の板、高さは外から変える）
+  const grain = add(new BoxGeometry(5.8, 0.06, c.halfWidth * 2 - 0.2), new MeshStandardMaterial({ color: 0xd9a441, roughness: 0.9 }), 0, 1.1, 0);
+  grain.visible = false;
+  g.userData.grain = grain;
+  return g;
+}
+

@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
+declare const process: { env: Record<string, string | undefined> };
+
 // GAME=1 のときはゲーム（game.html）だけを dist/game/ に作る。1 ファイルのページにまとめやすいように、入口ごとに別に作る
 const game = process.env.GAME === '1';
 

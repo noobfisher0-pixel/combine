@@ -42,6 +42,8 @@ export class HarvestModel {
   /** ロータの能力 [t/h]（穀粒＋MOG、本物の値） */
   readonly rotorCapacity: number;
   readonly footprint: Footprint;
+  /** 刈高さでの MOG/穀粒 */
+  readonly mogAtCut: number;
   private readonly lowest = new HeaderLowest();
   private knifeCacheAngle = Number.NaN;
   knifeX = 0;
@@ -69,6 +71,7 @@ export class HarvestModel {
     const report = harvestReport({ ...cutPose, reelLift: this.reelLift }, cond);
     this.rotorCapacity = report.stages.find((st) => st.id === 'rotor')!.capacity;
     this.footprint = machineFootprint({ ...cutPose, reelLift: this.reelLift }, cropHeight + 0.4);
+    this.mogAtCut = report.mog;
   }
 
   /** 搬送中の穀粒（ゲームの kg） */

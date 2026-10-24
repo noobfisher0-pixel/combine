@@ -16,6 +16,8 @@ export const KEY = {
   header: 16, // 押した刻みだけ立てる（切り替え）
   auger: 32,
   hold: 64,
+  cart: 128, // E：カートを呼ぶ／帰す
+  cartForce: 256, // Shift＋E：強行呼び出し
 } as const;
 
 export interface CombineState {

@@ -1,11 +1,17 @@
 /**
- * ゲームの画面（docs/game-design.md §7、G0）。
+ * ゲームの画面（docs/game-design.md §7、G0〜G1）。
  * シミュレーション（src/game/sim）を実時間 60 Hz の固定刻みで進め、毎フレーム描く。
  * 機体は原点に固定し、圃場（FieldView.root）を機体の位置の逆変換で動かす（M6 と同じ）。
  */
 import {
   ACESFilmicToneMapping,
   BoxGeometry,
+  BufferGeometry,
+  ConeGeometry,
+  CylinderGeometry,
+  Float32BufferAttribute,
+  Line,
+  LineBasicMaterial,
   DirectionalLight,
   Fog,
   Group,
@@ -27,14 +33,17 @@ import { FlowSystem } from '../flow/system';
 import { motionRates, type MachineState } from '../model/machine';
 import { buildParts } from '../model/parts';
 import { Animator } from '../view/animator';
-import { FieldView, FIELD_SKY } from '../view/fieldView';
+import { buildCartModel, FieldView, FIELD_SKY } from '../view/fieldView';
 import { FlowView } from '../view/flowView';
 import { MaterialLib } from '../view/materials';
 import { buildModel } from '../view/scene';
-import { BALANCE, REAL_DT } from './balance';
+import { BALANCE, REAL_DT, type Difficulty } from './balance';
 import { standardMap, type GameMap } from './map';
 import { KEY } from './sim/combine';
-import { GameSim } from './sim/game';
+import { GameSim, type GameEvent } from './sim/game';
+import { SPOUT } from './sim/cart';
+import { toMachine } from '../field/field';
+import { spec } from '../spec/spec';
 
 // ---------- renderer / scene ----------
 const renderer = new WebGLRenderer({ antialias: true });
@@ -77,23 +86,62 @@ let quality: 'high' | 'low' = new URLSearchParams(location.search).get('q') === 
 let started = false;
 let paused = false;
 let camPsi = 0;
+let difficulty: Difficulty = 'normal';
+let tutorial = false;
+
+// カート（圃場座標で動かす）、経路の線、待つ場所の旗
+const cartModel = buildCartModel();
+const pathLine = new Line(new BufferGeometry(), new LineBasicMaterial({ color: 0xe0ae4e }));
+pathLine.frustumCulled = false;
+const flag = new Group();
+{
+  const pole = new Mesh(new CylinderGeometry(0.06, 0.06, 3, 8), new MeshStandardMaterial({ color: 0xdddddd }));
+  pole.position.y = 1.5;
+  const cloth = new Mesh(new ConeGeometry(0.5, 1.2, 3).rotateZ(-Math.PI / 2), new MeshStandardMaterial({ color: 0xe0ae4e, roughness: 0.6 }));
+  cloth.position.set(0.6, 2.6, 0);
+  flag.add(pole, cloth);
+}
+let lastPath: unknown = null;
 
 function newRound() {
   map = standardMap();
-  sim = new GameSim(map, { difficulty: 'normal', autoStop: true });
-  if (fieldView) {
-    scene.remove(fieldView.root);
-    scene.remove(fieldView.cart);
-  }
+  sim = new GameSim(map, { difficulty, roundTime: tutorial ? Infinity : undefined });
+  if (fieldView) scene.remove(fieldView.root);
   fieldView = new FieldView(map.field, { headland: map.headland });
   fieldView.setQuality(quality);
-  fieldView.root.add(buildProps(map));
+  fieldView.root.add(buildProps(map), cartModel, pathLine, flag);
   scene.add(fieldView.root);
   flow.clear();
   camPsi = sim.combine.psi;
   model.setPose(sim.pose);
   resultEl.hidden = true;
   lastEventShown = 0;
+  lastPath = null;
+  tutStep = 0;
+  tutTurn = 0;
+  tutOdo = 0;
+  tutSteered = false;
+  $('tut').hidden = !tutorial;
+  renderTutorial();
+}
+
+/** カートの形・経路・旗を、シミュレーションの状態に合わせる（圃場座標） */
+function syncCart() {
+  const c = sim.cart;
+  cartModel.position.set(c.x, 0, c.z);
+  cartModel.rotation.y = c.psi;
+  const grain = cartModel.userData.grain as Mesh;
+  grain.visible = c.load > 1;
+  grain.position.y = 1.1 + (c.load / BALANCE.cart.capacity) * (spec.field.cart.top - 1.2);
+  if (c.path !== lastPath) {
+    lastPath = c.path;
+    const pts = c.path ?? [];
+    pathLine.geometry.setAttribute('position', new Float32BufferAttribute(pts.flatMap(([x, z]) => [x, 0.3, z]), 3));
+    pathLine.geometry.computeBoundingSphere();
+  }
+  pathLine.visible = !!c.path && (c.state === 'toCombine' || c.state === 'waiting' || c.state === 'toTruck');
+  flag.visible = c.state === 'waiting' && !!c.waitPoint;
+  if (c.waitPoint) flag.position.set(c.waitPoint[0], 0, c.waitPoint[1]);
 }
 
 /** 柵とトラック（圃場座標） */
@@ -144,9 +192,14 @@ const CODE: Record<string, number> = {
   KeyW: KEY.up, ArrowUp: KEY.up, KeyS: KEY.down, ArrowDown: KEY.down,
   KeyA: KEY.left, ArrowLeft: KEY.left, KeyD: KEY.right, ArrowRight: KEY.right,
 };
-const EDGE: Record<string, number> = { Space: KEY.header, KeyQ: KEY.auger, KeyF: KEY.hold };
+const EDGE: Record<string, number> = { Space: KEY.header, KeyQ: KEY.auger, KeyF: KEY.hold, KeyE: KEY.cart };
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && !started) return start();
+  if (e.code === 'KeyE' && e.shiftKey && !e.repeat) {
+    held.add(e.code);
+    edges |= KEY.cart | KEY.cartForce;
+    return;
+  }
   if (e.code === 'Escape') return setPaused(!paused);
   if (e.code === 'KeyR' && paused) return retry();
   if (e.code === 'KeyC' && !e.repeat) return cycleCamera();
@@ -212,7 +265,16 @@ function toast(text: string, kind: '' | 'warn' | 'bad' = '') {
   toastTimer = window.setTimeout(() => (toastEl.hidden = true), 2200);
 }
 let lastEventShown = 0;
-const EVENT_TEXT: Record<string, [string, '' | 'warn' | 'bad']> = {
+const EVENT_TEXT: Record<GameEvent['kind'], [string, '' | 'warn' | 'bad']> = {
+  cartCalled: ['カートを呼びました', ''],
+  cartRecalled: ['カートをトラックへ帰します', ''],
+  cartNoLane: ['左側に通り道がありません。行程の出口で待ちます', 'warn'],
+  cartArrived: ['カートが横に来ました（Q で排出）', ''],
+  cartFull: ['カートが満杯：トラックへ戻ります', ''],
+  cartStuck: ['カートが進めません：トラックへ戻ります', 'bad'],
+  cartDumped: ['トラックに下ろしました', ''],
+  spill: ['カートがいません：地面にこぼれています', 'bad'],
+  noCart: ['カートが横にいないので排出しません', 'warn'],
   tank70: ['タンク 70 %', 'warn'],
   tank90: ['タンク 90 % ― もうすぐ満杯', 'warn'],
   full: ['タンクが満杯：刈った小麦は入りません', 'bad'],
@@ -227,7 +289,27 @@ function renderHud() {
   const rem = sim.remaining / BALANCE.timeScale; // 表示は実時間
   $('time').textContent = `${Math.floor(rem / 60)}:${String(Math.floor(rem % 60)).padStart(2, '0')}`;
   $('time').classList.toggle('low', rem < 30);
-  $('score').innerHTML = `${t1(0)}<span class="unit">t</span>`;
+  $('score').innerHTML = `${t1(sim.truck)}<span class="unit">t</span>`;
+  const ho = sim.lastHandoff / BALANCE.timeScale;
+  const hoEl = $('handoff');
+  hoEl.textContent = Number.isFinite(ho) ? (ho > 0 ? `${Math.floor(ho / 60)}:${String(Math.floor(ho % 60)).padStart(2, '0')}` : '間に合わない') : '―';
+  hoEl.classList.toggle('low', Number.isFinite(ho) && ho < 30);
+  const cart = sim.cart;
+  const CART_NAMES = { idle: '待機', toCombine: '向かう', waiting: '待つ', alongside: '並走', toTruck: '帰る', dumping: '荷下ろし' } as const;
+  const cs = $('cartState');
+  const eta = cart.state === 'toCombine' || cart.state === 'toTruck' ? ` ${Math.ceil(cart.eta / BALANCE.timeScale)} 秒` : '';
+  cs.textContent = CART_NAMES[cart.state] + eta + (cart.force ? '（強行）' : '');
+  cs.className = `tag ${cart.state === 'alongside' ? 'on' : cart.state === 'waiting' ? 'warn' : ''}`;
+  $('cartLoad').textContent = `${t1(cart.load)} / ${t1(BALANCE.cart.capacity)} t`;
+  $('unloadState').textContent = sim.unloading ? (sim.cart.accepts(sim.combineView) ? '排出中' : 'こぼれている') : c.augerPos > 0 ? 'オーガ出し' : '';
+  // 並走の範囲の図：スパウトの位置を荷台の座標で（横 ±1.2 m・前後 ±2.5 m が点線）
+  const sp = sim.cart.state === 'alongside' ? toMachine(cart.place, ...spoutField()) : null;
+  const dot = $('winSpout');
+  dot.setAttribute('visibility', sp && c.augerPos > 0 ? 'visible' : 'hidden');
+  if (sp) {
+    dot.setAttribute('cx', String(100 + Math.max(-95, Math.min(95, sp[0] * 12))));
+    dot.setAttribute('cy', String(20 + Math.max(-18, Math.min(18, sp[1] * 10))));
+  }
   $('speed').textContent = (c.v * 3.6).toFixed(1);
   $('target').textContent = `目標 ${c.vTarget.toFixed(2)}`;
   const hdr = $('header');
@@ -263,22 +345,79 @@ function renderHud() {
   }
 }
 
+function spoutField(): [number, number] {
+  const p = sim.place;
+  const c = Math.cos(p.psi);
+  const s = Math.sin(p.psi);
+  return [p.x + c * SPOUT.x + s * SPOUT.z, p.z - s * SPOUT.x + c * SPOUT.z];
+}
+
 function showResult() {
   const s = sim.harvest.stats;
+  $('resultRank').textContent = sim.rank;
+  $('resultScore').textContent = `${t1(sim.truck)} t`;
+  $('resultRatio').textContent = `理論上の上限 ${t1(sim.upperBound)} t の ${(sim.ratio * 100).toFixed(0)} %`;
   const rows: Array<[string, string]> = [
-    ['タンクに入った量', `${t1(s.harvested)} t`],
-    ['刈った面積', `${((s.cutCells * map.field.cell * map.field.cell) / 10000).toFixed(2)} ha`],
+    ['刈ってタンクに入った量', `${t1(s.harvested)} t`],
+    ['時間切れで最後に移した量', `${t1(sim.finalTransfer)} t`],
+    ['数えなかった量（タンクに残った）', `${t1(sim.leftInTank)} t`],
     ['あふれ（満杯）', `${t1(s.overflow)} t`],
     ['取りこぼし（負荷）', `${t1(s.rotorLoss)} t`],
-    ['押し倒し', `${t1(s.flattenLoss)} t（${s.flattenedCells} セル）`],
+    ['こぼし（カートなしで排出）', `${t1(sim.spill)} t`],
+    ['押し倒し（コンバイン）', `${t1(s.flattenLoss)} t`],
+    ['踏み倒し（カート）', `${t1(sim.cart.trampleLoss)} t`],
+    ['カートを待った時間', `${(sim.cart.waitTime / BALANCE.timeScale).toFixed(0)} 秒`],
+    ['刈った面積', `${((s.cutCells * map.field.cell * map.field.cell) / 10000).toFixed(2)} ha`],
     ['衝突', `${sim.collisions} 回`],
   ];
   $('resultStats').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   resultEl.hidden = false;
 }
 
+// ---------- tutorial（§7.3） ----------
+let tutStep = 0;
+let tutTurn = 0;
+let tutOdo = 0;
+let tutSteered = false;
+const TUT: Array<{ text: string; done: () => boolean }> = [
+  { text: 'W で走り出し、A / D で曲がってみましょう。後輪で曲がるので、後ろが外へ振れます。', done: () => tutOdo > 15 && tutSteered },
+  { text: 'Space でヘッダを下げて刈りましょう。左下の負荷が 100 % を超えないように速さを合わせます（F で自動）。', done: () => sim.harvest.stats.cutCells > 400 },
+  { text: 'E でカートを呼び、横に来たら Q で排出オーガを出します。カートは刈った跡と枕地しか走れません。', done: () => sim.cart.load > 2000 },
+  { text: '排出は左側です。左が刈り跡になるように回ります（回り刈り）。畑の端では枕地へ出て、左へ大きく回って次の辺へ。半周（180°）回ってみましょう。', done: () => tutTurn > Math.PI },
+  { text: 'E でカートを帰しましょう。トラックに入った量が得点です。', done: () => sim.truck > 0 },
+];
+function renderTutorial() {
+  if (!tutorial) return;
+  if (tutStep >= TUT.length) {
+    $('tutStep').textContent = '完了';
+    $('tutText').textContent = 'これで全部です。Esc → 「やり直し」でもう一度、またはタイトルから本番を始めましょう。';
+    return;
+  }
+  $('tutStep').textContent = `${tutStep + 1} / ${TUT.length}`;
+  $('tutText').textContent = TUT[tutStep].text;
+}
+let prevPsi = 0;
+function updateTutorial() {
+  if (!tutorial || tutStep >= TUT.length) return;
+  tutOdo += Math.abs(sim.combine.v) * BALANCE.timeScale / 60;
+  if (Math.abs(sim.combine.steer) > 10) tutSteered = true;
+  tutTurn += Math.abs(sim.combine.psi - prevPsi);
+  prevPsi = sim.combine.psi;
+  if (TUT[tutStep].done()) {
+    tutStep++;
+    tutTurn = 0;
+    renderTutorial();
+    toast(tutStep >= TUT.length ? 'チュートリアル完了！' : 'よくできました');
+  }
+}
+
 // ---------- flow ----------
-function start() {
+function start(tut = false) {
+  const sel = document.querySelector<HTMLInputElement>('input[name=diff]:checked');
+  difficulty = (sel?.value as Difficulty) ?? 'normal';
+  tutorial = tut;
+  newRound();
+  prevPsi = sim.combine.psi;
   started = true;
   startEl.hidden = true;
 }
@@ -293,7 +432,13 @@ function retry() {
   pauseEl.hidden = true;
   newRound();
 }
-$('startBtn').addEventListener('click', start);
+$('startBtn').addEventListener('click', () => start(false));
+$('tutBtn').addEventListener('click', () => start(true));
+$('titleBtn').addEventListener('click', () => {
+  started = false;
+  resultEl.hidden = true;
+  startEl.hidden = false;
+});
 $('resumeBtn').addEventListener('click', () => setPaused(false));
 $('retryBtn').addEventListener('click', retry);
 $('againBtn').addEventListener('click', () => newRound());
@@ -328,20 +473,24 @@ renderer.setAnimationLoop((now) => {
       edges = 0;
       acc -= REAL_DT;
       n++;
+      updateTutorial();
     }
     if (n === 10) acc = 0;
     if (sim.over) showResult();
   }
   model.setPose(sim.pose);
   machine.groundSpeed = sim.combine.v * 3.6;
+  machine.unloadOn = sim.unloading;
   const ts = running ? BALANCE.timeScale : 0;
   animator.update(dt, ts, motionRates(machine));
   flow.update(dt * ts, {
     pose: sim.pose, engineOn: true, headerOn: true, separatorOn: true, unloadOn: false,
     groundSpeed: machine.groundSpeed, yield: map.yield, cropHeight: map.cropHeight,
     draperSide: motionRates(machine).draperSide, draperCenter: 3.5, elevator: 3,
-    feedKgS: sim.harvest.feedKgS, tank: { mass: sim.harvest.tank, unloading: false },
+    feedKgS: sim.harvest.feedKgS, tank: { mass: sim.harvest.tank, unloading: sim.unloading },
+    unloadFloor: sim.cart.accepts(sim.combineView) ? spec.field.cart.top - 0.3 : undefined,
   });
+  syncCart();
   flowView.sync();
   elapsed += dt;
   const h = sim.harvest;
@@ -356,10 +505,18 @@ renderer.setAnimationLoop((now) => {
   get sim() { return sim; },
   get frames() { return frames; },
   get nearChunks() { return fieldView?.nearChunks ?? 0; },
-  start,
+  start: (tut = false) => start(tut),
   /** キーを押したままにする（e2e 用） */
   press: (code: string, on: boolean) => { if (on) { held.add(code); if (EDGE[code] !== undefined) edges |= EDGE[code]; } else held.delete(code); },
   setQuality: (q: 'high' | 'low') => { quality = q; fieldView?.setQuality(q); },
+  /** 描かずに n 刻み進める（e2e 用。keys は毎刻みの入力） */
+  fastForward: (n: number, keys = 0) => {
+    for (let i = 0; i < n && !sim.over; i++) {
+      sim.step(keysNow() | keys);
+      edges = 0;
+    }
+    if (sim.over) showResult();
+  },
   info: () => renderer.info.render,
 };
 
