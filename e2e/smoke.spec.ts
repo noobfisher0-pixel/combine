@@ -121,6 +121,7 @@ test('内部機構：断面・X線・分解で中が見え、エラーが出な�
 });
 
 test('作物フロー：刈り取り中は粒子が流れ、タンクに穀粒がたまる', async ({ page }) => {
+  test.setTimeout(180_000); // ソフトウェア描画では 1 フレームが遅く、既定の 60 秒ぎりぎりになる
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');

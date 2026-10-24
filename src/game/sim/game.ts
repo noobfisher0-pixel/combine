@@ -164,7 +164,7 @@ export class GameSim {
     if (pressed & (KEY.cart | KEY.cartForce)) this.cart.command((keys & KEY.cartForce) !== 0);
     const hold = c.loadHold ? h.speedForLoad(this.place, BALANCE.combine.loadHoldTarget) : null;
     const before = { x: c.x, z: c.z, psi: c.psi };
-    stepCombine(c, keys, hold);
+    stepCombine(c, keys, hold, this.map.inWater(c.x, c.z) ? 0.5 : 1);
     if (this.hits(this.place)) {
       c.x = before.x;
       c.z = before.z;

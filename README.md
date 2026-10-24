@@ -9,7 +9,7 @@ Node.js 22 で確認しています。
 ```sh
 npm install          # .npmrc で legacy-peer-deps を有効にしています
 npm run dev          # 3D モデルを http://localhost:5173 で表示
-npm run dev:game     # 収穫ゲーム（G1：刈る・カートで回収・得点）を http://localhost:5173/game.html で表示
+npm run dev:game     # 収穫ゲーム（G2：自動生成のマップ・ボットの目安）を http://localhost:5173/game.html で表示
 npm test             # spec の干渉・外形・不変条件の自動検査（Vitest）
 npm run test:e2e     # ブラウザでの表示確認（Playwright）
 npm run build        # 型チェック＋本番ビルド（dist/、ゲームは dist/game/）
@@ -26,7 +26,7 @@ npm run build        # 型チェック＋本番ビルド（dist/、ゲームは 
 | `src/collision/` | 干渉判定（GJK）と姿勢ごとの検査 |
 | `src/flow/` | 作物フロー（粒子の経路・量のつながり・タンク・排出） |
 | `src/field/` | 小麦の圃場（0.25 m 角のセル）、走行経路（直線・円弧・U ターン）、収穫シナリオと W-7・W-8 の判定 |
-| `src/game/` | 収穫ゲーム（docs/game-design.md）：バランス表、決定的な乱数、マップ、シミュレーション（運転・刈り取り・タンク・カートの AI・得点）、画面 |
+| `src/game/` | 収穫ゲーム（docs/game-design.md）：バランス表、決定的な乱数、マップ、マップの自動生成、シミュレーション（運転・刈り取り・タンク・カートの AI・得点）、基準のボット、画面 |
 | `src/view/` | 3D モデルの組み立て、材質、断面表示、動き、小麦の圃場の描画 |
 | `src/view/visuals/` | 部品ごとの見た目（検査用の形の内側に収める） |
 | `tests/`、`e2e/` | 自動検査とブラウザでの確認 |

@@ -120,8 +120,15 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
     <div class="diff" role="radiogroup" aria-label="難易度">
       <label><input type="radio" name="diff" value="easy">かんたん<small>5 分。70 % で自動でカートを呼ぶ</small></label>
       <label><input type="radio" name="diff" value="normal" checked>ふつう<small>4 分。満杯で自動停止</small></label>
-      <label><input type="radio" name="diff" value="hard">むずかしい<small>4 分。カートがいないとこぼれる</small></label>
+      <label><input type="radio" name="diff" value="hard">むずかしい<small>4 分。カートがいないとこぼれる。倒れた小麦・水たまり・木</small></label>
     </div>
+    <div class="diff" role="radiogroup" aria-label="マップ">
+      <label><input type="radio" name="map" value="daily" checked>今日のマップ<small id="dailyName"></small></label>
+      <label><input type="radio" name="map" value="standard">標準マップ<small>120 m × 70 m の長方形</small></label>
+      <label><input type="radio" name="map" value="seed">シード<small><input id="seedInput" type="text" maxlength="40" placeholder="好きな文字" style="width:100%;font:12px var(--f-num);background:#26302e;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:2px 4px"></small></label>
+      <label><input type="radio" name="map" value="random">ランダム<small>毎回ちがう畑</small></label>
+    </div>
+    <p class="note" id="mapInfo" aria-live="polite"></p>
     <button id="startBtn">開始（Enter）</button>
     <button class="sub" id="tutBtn">チュートリアル</button>
   </div>
@@ -139,7 +146,7 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 <div class="overlay" id="result" hidden>
   <div class="card">
     <h2 id="resultTitle">時間切れ</h2>
-    <div class="res-head"><span class="rank" id="resultRank">C</span><div><div class="big" id="resultScore">0.0 t</div><div class="note" id="resultRatio"></div></div></div>
+    <div class="res-head"><span class="rank" id="resultRank">C</span><div><div class="big" id="resultScore">0.0 t</div><div class="note" id="resultRatio"></div><div class="note" id="resultMap"></div></div></div>
     <dl class="stats" id="resultStats"></dl>
     <p class="note">ランクは理論上の上限（脱穀部の能力いっぱいで刈り続け、全部をトラックへ運べた量）に対する割合で決まります。しきい値は仮の値です。</p>
     <button id="againBtn">同じ条件でもう一度</button>

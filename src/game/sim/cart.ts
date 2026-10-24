@@ -90,6 +90,10 @@ export class Cart {
   readonly home: MachinePlace;
   /** 踏み倒した量（ゲームの kg）とセル数 */
   trampleLoss = 0;
+  private laneBadT = 0;
+  private clock = 0;
+  private lastNoLane = -Infinity;
+  private lastArrived = -Infinity;
   trampledCells = 0;
   waitTime = 0;
 
@@ -196,7 +200,7 @@ export class Cart {
         if (this.state === 'waiting') this.state = 'toCombine';
         this.waitPoint = null;
       } else {
-        if (this.state !== 'waiting') this.events.push('cartNoLane');
+        if (this.state !== 'waiting') this.noLane();
         this.state = 'waiting';
         const [wx, wz] = this.exitPoint(c);
         goal = g.nearestFree(wx, wz);
@@ -260,7 +264,7 @@ export class Cart {
     let kappa = (2 * mz) / (ld * ld); // > 0 で右（+z）へ
     kappa = Math.max(-1 / MIN_R, Math.min(1 / MIN_R, kappa));
     // 曲がりがきついほど遅く
-    const vt = Math.min(SPEED, Math.sqrt(2 * ACCEL * distGoal), Math.abs(bearing) > 0.6 ? 2.5 : SPEED);
+    const vt = Math.min(SPEED * this.slow(), Math.sqrt(2 * ACCEL * distGoal), Math.abs(bearing) > 0.6 ? 2.5 : SPEED);
     this.accel(vt);
     this.psi -= kappa * this.v * GAME_DT;
     this.move();
@@ -288,6 +292,11 @@ export class Cart {
       pz = q[1];
     }
     return [px, pz];
+  }
+
+  /** 水たまりの中は半分の速さ（§6） */
+  private slow(): number {
+    return this.map.inWater(this.x, this.z) ? 0.5 : 1;
   }
 
   private accel(vt: number) {
@@ -326,9 +335,10 @@ export class Cart {
     let vx = cvx + rvx;
     let vz = cvz + rvz;
     const sp = Math.hypot(vx, vz);
-    if (sp > SPEED + 1) {
-      vx *= (SPEED + 1) / sp;
-      vz *= (SPEED + 1) / sp;
+    const cap = (SPEED + 1) * this.slow();
+    if (sp > cap) {
+      vx *= cap / sp;
+      vz *= cap / sp;
     }
     this.x += vx * GAME_DT;
     this.z += vz * GAME_DT;
@@ -367,8 +377,16 @@ export class Cart {
     return false;
   }
 
+  /** 「通り道がない」の知らせは 10 秒に 1 回まで */
+  private noLane() {
+    if (this.clock - this.lastNoLane < 10) return;
+    this.lastNoLane = this.clock;
+    this.events.push('cartNoLane');
+  }
+
   /** 1 刻み。返り値：トラックへ下ろした量（ゲームの kg） */
   step(c: CombineView): number {
+    this.clock += GAME_DT;
     let dumped = 0;
     const was = [this.x, this.z];
     switch (this.state) {
@@ -391,7 +409,8 @@ export class Cart {
             this.state = 'alongside';
             this.avoid = AVOID;
             this.path = null;
-            this.events.push('cartArrived');
+            if (this.clock - this.lastArrived > 10) this.events.push('cartArrived');
+            this.lastArrived = this.clock;
           }
         }
         break;
@@ -402,9 +421,13 @@ export class Cart {
           this.go('toCombine');
           break;
         }
-        if (!this.laneOk(t) && !this.force) {
+        // 通り道がない状態が 2 秒続いたら待つ（角のループの途中などで、ちらつかないように）
+        if (!this.laneOk(t) && !this.force) this.laneBadT += GAME_DT;
+        else this.laneBadT = 0;
+        if (this.laneBadT > 2) {
+          this.laneBadT = 0;
           this.go('waiting');
-          this.events.push('cartNoLane');
+          this.noLane();
           break;
         }
         this.alongside(c);

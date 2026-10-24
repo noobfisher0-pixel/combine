@@ -63,7 +63,8 @@ export function maxForward(s: CombineState): number {
  * 入力で目標速度・ハンドル・ヘッダ・オーガを変え、1 刻み進める（衝突の判定は呼び出し側）。
  * holdSpeed：負荷ホールドが求める速度 [km/h]（null なら変えない）
  */
-export function stepCombine(s: CombineState, keys: number, holdSpeed: number | null): void {
+/** slow：速さの倍率（水たまりの中で 0.5） */
+export function stepCombine(s: CombineState, keys: number, holdSpeed: number | null, slow = 1): void {
   const pressed = keys & ~s.prevKeys;
   const up = (keys & KEY.up) !== 0;
   const down = (keys & KEY.down) !== 0;
@@ -134,7 +135,7 @@ export function stepCombine(s: CombineState, keys: number, holdSpeed: number | n
     s.v = 0;
     s.vTarget = 0;
   } else {
-    const vt = ms(s.vTarget);
+    const vt = ms(s.vTarget) * slow;
     const speedingUp = Math.abs(vt) > Math.abs(s.v) && Math.sign(vt) * Math.sign(s.v) >= 0;
     const a = (speedingUp ? C.accel : C.brake) * GAME_DT;
     s.v += Math.max(-a, Math.min(a, vt - s.v));

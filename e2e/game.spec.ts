@@ -63,6 +63,28 @@ test('ゲーム G0〜G1：刈って、カートを呼んで排出し、時間切
   void api;
 });
 
+test('ゲーム G2：マップを選ぶと説明とボットの目安が出て、障害物のある畑で始められる', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 400)); });
+  await page.goto('/game/game.html?q=low');
+  await expect(page.locator('#mapInfo')).toContainText('シード');
+  await page.locator('input[name=diff][value=hard]').check();
+  await page.locator('#seedInput').fill('e2e-hard');
+  await expect(page.locator('#mapInfo')).toContainText('シード「e2e-hard」');
+  await expect(page.locator('#mapInfo')).toContainText('ha');
+  // ボットの目安（Worker）が出るまで待つ
+  await expect(page.locator('#mapInfo')).toContainText(/ボットの目安 [0-9.]+ t/, { timeout: 120_000 });
+  await page.locator('#startBtn').click();
+  await expect(page.locator('#start')).toBeHidden();
+  const obs = await page.evaluate(() => (window as unknown as { __game: { sim: { map: { obstacles: unknown[]; seed: string } } } }).__game.sim.map);
+  expect(obs.seed).toBe('e2e-hard');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: 'test-results/game-hard-map.png' });
+  expect(errors).toEqual([]);
+});
+
 test('ゲーム：チュートリアルが始まり、手順の案内が出る', async ({ page }) => {
   await page.goto('/game/game.html?q=low');
   await page.locator('#tutBtn').click();

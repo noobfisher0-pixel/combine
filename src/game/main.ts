@@ -9,7 +9,10 @@ import {
   BufferGeometry,
   ConeGeometry,
   CylinderGeometry,
+  CircleGeometry,
   Float32BufferAttribute,
+  IcosahedronGeometry,
+  SphereGeometry,
   Line,
   LineBasicMaterial,
   DirectionalLight,
@@ -38,7 +41,10 @@ import { FlowView } from '../view/flowView';
 import { MaterialLib } from '../view/materials';
 import { buildModel } from '../view/scene';
 import { BALANCE, REAL_DT, type Difficulty } from './balance';
-import { standardMap, type GameMap } from './map';
+import { dailySeed, generateMap, planMap, SHAPE_NAMES, standardMap, standardPlan, type GameMap } from './map';
+import BotWorker from './worker?worker&inline';
+import { runBot } from './bot';
+import type { BotReply, BotRequest } from './worker';
 import { KEY } from './sim/combine';
 import { GameSim, type GameEvent } from './sim/game';
 import { SPOUT } from './sim/cart';
@@ -103,8 +109,12 @@ const flag = new Group();
 }
 let lastPath: unknown = null;
 
+/** マップの選び方（タイトル画面）。ランダムは選んだときにシードを決めて、共有できるようにする */
+type MapChoice = { standard: boolean; seed: string };
+let mapChoice: MapChoice = { standard: false, seed: dailySeed() };
+
 function newRound() {
-  map = standardMap();
+  map = mapChoice.standard ? standardMap() : generateMap(mapChoice.seed, difficulty);
   sim = new GameSim(map, { difficulty, roundTime: tutorial ? Infinity : undefined });
   if (fieldView) scene.remove(fieldView.root);
   fieldView = new FieldView(map.field, { headland: map.headland });
@@ -144,9 +154,44 @@ function syncCart() {
   if (c.waitPoint) flag.position.set(c.waitPoint[0], 0, c.waitPoint[1]);
 }
 
-/** 柵とトラック（圃場座標） */
+/** 柵・トラック・障害物・水たまり（圃場座標） */
 function buildProps(m: GameMap): Group {
   const g = new Group();
+  // 障害物：電柱、岩、立ち木（当たりの半径は map の r）
+  const poleMat = new MeshStandardMaterial({ color: 0x7a7468, roughness: 0.8 });
+  const rockMat = new MeshStandardMaterial({ color: 0x6e6a63, roughness: 1, flatShading: true });
+  const barkMat = new MeshStandardMaterial({ color: 0x5a4632, roughness: 1 });
+  const leafMat = new MeshStandardMaterial({ color: 0x3f5a2c, roughness: 0.9, flatShading: true });
+  for (const o of m.obstacles) {
+    const og = new Group();
+    if (o.kind === 'pole') {
+      const pole = new Mesh(new CylinderGeometry(0.13, 0.16, 8, 10), poleMat);
+      pole.position.y = 4;
+      const bar = new Mesh(new BoxGeometry(0.12, 0.12, 1.8), poleMat);
+      bar.position.y = 7.3;
+      og.add(pole, bar);
+    } else if (o.kind === 'rock') {
+      const rock = new Mesh(new IcosahedronGeometry(o.r, 0), rockMat);
+      rock.scale.set(1.2, 0.7, 1);
+      rock.position.y = o.r * 0.4;
+      og.add(rock);
+    } else {
+      const trunk = new Mesh(new CylinderGeometry(0.28, 0.4, 3.2, 8), barkMat);
+      trunk.position.y = 1.6;
+      const crown = new Mesh(new SphereGeometry(o.r * 1.4, 10, 8), leafMat);
+      crown.position.y = 4.6;
+      crown.scale.y = 0.85;
+      og.add(trunk, crown);
+    }
+    og.position.set(o.x, 0, o.z);
+    g.add(og);
+  }
+  const waterMat = new MeshStandardMaterial({ color: 0x4d6b78, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 });
+  for (const wv of m.water) {
+    const pool = new Mesh(new CircleGeometry(wv.r, 40).rotateX(-Math.PI / 2), waterMat);
+    pool.position.set(wv.x, 0.03, wv.z);
+    g.add(pool);
+  }
   const w = m.world;
   const post = new BoxGeometry(0.12, 1.2, 0.12);
   const postMat = new MeshStandardMaterial({ color: 0x6b5a45, roughness: 0.9 });
@@ -357,6 +402,8 @@ function showResult() {
   $('resultRank').textContent = sim.rank;
   $('resultScore').textContent = `${t1(sim.truck)} t`;
   $('resultRatio').textContent = `理論上の上限 ${t1(sim.upperBound)} t の ${(sim.ratio * 100).toFixed(0)} %`;
+  const ref = botCache.get(mapKey(mapChoice, difficulty));
+  $('resultMap').textContent = `${mapChoice.standard ? '標準マップ' : `シード「${mapChoice.seed}」`}・${{ easy: 'かんたん', normal: 'ふつう', hard: 'むずかしい' }[difficulty]}` + (ref ? ` ／ ボット ${t1(ref.score)} t` : '');
   const rows: Array<[string, string]> = [
     ['刈ってタンクに入った量', `${t1(s.harvested)} t`],
     ['時間切れで最後に移した量', `${t1(sim.finalTransfer)} t`],
@@ -411,10 +458,80 @@ function updateTutorial() {
   }
 }
 
+// ---------- map choice & bot reference（§6・§9） ----------
+const botCache = new Map<string, BotReply>();
+let worker: Worker | null = null;
+let reqId = 0;
+const mapKey = (c: MapChoice, d: Difficulty) => (c.standard ? `standard:${d}` : `${d}:${c.seed}`);
+function readChoice(): MapChoice {
+  const kind = document.querySelector<HTMLInputElement>('input[name=map]:checked')?.value ?? 'daily';
+  if (kind === 'standard') return { standard: true, seed: 'standard' };
+  if (kind === 'seed') return { standard: false, seed: ($('seedInput') as HTMLInputElement).value.trim() || 'seed' };
+  if (kind === 'random') return mapChoice.standard || mapChoice.seed === dailySeed() ? { standard: false, seed: randomSeed() } : mapChoice;
+  return { standard: false, seed: dailySeed() };
+}
+function randomSeed(): string {
+  return Math.floor(Math.random() * 36 ** 6).toString(36).padStart(6, '0');
+}
+function readDifficulty(): Difficulty {
+  return (document.querySelector<HTMLInputElement>('input[name=diff]:checked')?.value as Difficulty) ?? 'normal';
+}
+/** タイトル画面のマップの説明と、ボットの目安（Worker で計算） */
+function updateMapInfo() {
+  mapChoice = readChoice();
+  const d = readDifficulty();
+  const p = mapChoice.standard ? standardPlan('standard', d) : planMap(mapChoice.seed, d);
+  const extras = [
+    p.obstacles.length ? `障害物 ${p.obstacles.length}` : '',
+    p.lodged.length ? `倒れた小麦 ${p.lodged.length}` : '',
+    p.water.length ? `水たまり ${p.water.length}` : '',
+  ].filter(Boolean).join('・');
+  const key = mapKey(mapChoice, d);
+  const ref = botCache.get(key);
+  $('mapInfo').textContent =
+    `${mapChoice.standard ? '標準マップ' : `シード「${mapChoice.seed}」`}：${SHAPE_NAMES[p.shape]}、${p.length} m × ${p.width} m（${(p.area / 10000).toFixed(2)} ha）` +
+    (extras ? `、${extras}` : '') +
+    ` ／ ボットの目安 ${ref ? `${t1(ref.score)} t（${ref.rank}）` : '計算中…'}`;
+  if (!ref) {
+    const req: BotRequest = { id: ++reqId, seed: mapChoice.seed, difficulty: d, standard: mapChoice.standard };
+    try {
+      worker ??= new BotWorker();
+      worker.onmessage = (e: MessageEvent<BotReply>) => {
+        botCache.set(key, e.data);
+        if (e.data.id === reqId) updateMapInfo();
+      };
+      worker.onerror = () => {
+        worker = null;
+        botOnMainThread(req, key);
+      };
+      worker.postMessage(req);
+    } catch {
+      botOnMainThread(req, key);
+    }
+  }
+}
+/** Worker が使えない環境（埋め込みの制限など）では、少し待ってからこのページで計算する（約 1 秒止まる） */
+function botOnMainThread(req: BotRequest, key: string) {
+  setTimeout(() => {
+    if (botCache.has(key) || req.id !== reqId) return;
+    const m = req.standard ? standardMap() : generateMap(req.seed, req.difficulty);
+    const r = runBot(new GameSim(m, { difficulty: req.difficulty }));
+    botCache.set(key, { id: req.id, score: r.score, ratio: r.ratio, rank: r.rank });
+    updateMapInfo();
+  }, 300);
+}
+$('dailyName').textContent = `${dailySeed()}（UTC）`;
+for (const el of document.querySelectorAll<HTMLInputElement>('input[name=map], input[name=diff]')) el.addEventListener('change', updateMapInfo);
+$('seedInput').addEventListener('input', () => {
+  (document.querySelector<HTMLInputElement>('input[name=map][value=seed]')!).checked = true;
+  updateMapInfo();
+});
+$('seedInput').addEventListener('keydown', (e) => e.stopPropagation());
+
 // ---------- flow ----------
 function start(tut = false) {
-  const sel = document.querySelector<HTMLInputElement>('input[name=diff]:checked');
-  difficulty = (sel?.value as Difficulty) ?? 'normal';
+  difficulty = readDifficulty();
+  mapChoice = tut ? { standard: true, seed: 'standard' } : readChoice();
   tutorial = tut;
   newRound();
   prevPsi = sim.combine.psi;
@@ -455,6 +572,7 @@ window.addEventListener('resize', () => {
 
 // ---------- loop ----------
 newRound();
+updateMapInfo();
 let acc = 0;
 let last = performance.now();
 let frames = 0;
