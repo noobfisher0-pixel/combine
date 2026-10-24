@@ -30,13 +30,30 @@ import {
   Vector3,
   Vector4,
 } from 'three';
-import { FLAT, CUT, rng, type WheatField } from '../field/field';
-import type { HarvestScenario } from '../field/scenario';
+import { CUT, FLAT, LODGED, NONE as NONE_STATE, rng, type MachinePlace, type WheatField } from '../field/field';
 import { spec } from '../spec/spec';
+
+/** 圃場を描くのに要る機体の状態（M6 のシナリオとゲームの両方が満たす） */
+export interface FieldViewSource {
+  place: MachinePlace;
+  /** 刈刃の線（機体座標の x）と高さ */
+  knifeX: number;
+  knifeY: number;
+  headerDown: boolean;
+  pose: { reelSlide: number };
+  /** 運搬車（機体座標、M6 のシナリオ用） */
+  cart?: { visible: boolean; x: number; z: number };
+}
+
+export interface FieldViewOptions {
+  /** 枕地の幅（地面の色を変える範囲） */
+  headland?: number;
+}
 
 /** 近い株を描く距離 [m] */
 export const LOD_R = 9;
-const CHUNK = 20; // セル（5 m）
+/** 近い株のまとまりの大きさ [m] */
+const CHUNK_M = 5;
 
 // ------------------------------------------------------------ 株の形（y は 0〜1 に正規化、シェーダで草丈を掛ける）
 
@@ -84,12 +101,15 @@ const HEAD = [0.62, 0.44, 0.17];
 const AWN = [0.68, 0.56, 0.32];
 const LEAF = [0.46, 0.38, 0.2];
 
-/** 近くの株：茎 7 本。茎（細い帯）、穂（十字の紡錘）、芒、枯れた葉 1 枚。部品番号 0 茎 / 1 葉 / 2 穂・芒 */
-export function nearClumpGeometry(seed = 3): BufferGeometry {
+/**
+ * 近くの株：茎 stems 本（0.25 m セルで 7 本、0.5 m セルで 10 本）。茎（細い帯）、穂（十字の紡錘）、芒、枯れた葉 1 枚。
+ * 部品番号 0 茎 / 1 葉 / 2 穂・芒。株の広がりは 0.25 m セルの大きさで作り、シェーダでセルの大きさに合わせて広げる
+ */
+export function nearClumpGeometry(seed = 3, stems = 7): BufferGeometry {
   const r = rng(seed);
   const b: GeoBuf = { pos: [], col: [], part: [], idx: [] };
   const head = spec.crop.wheat.headLength / spec.crop.wheat.height; // 正規化した穂の長さ
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < stems; i++) {
     const bx = (r() - 0.5) * 0.16;
     const bz = (r() - 0.5) * 0.16;
     const hf = 0.88 + r() * 0.12;
@@ -163,6 +183,7 @@ attribute float aPart;
 uniform sampler2D uState;
 uniform float uNx;
 uniform float uCell;
+uniform float uScale; // セルの大きさ / 0.25 m（株を横に広げる）
 uniform float uTime;
 uniform float uLodR;
 uniform vec4 uKnife; // 刈刃の x、刈幅の半分、ヘッダを下げているか、リールが届く距離
@@ -184,6 +205,7 @@ vec2 cellPos = (vec2(ci, ck) + 0.5) * uCell + (vec2(r1, r2) - 0.5) * uCell * 0.5
 vec3 wc = (modelMatrix * vec4(cellPos.x, 0.0, cellPos.y, 1.0)).xyz;
 float camDist = distance(wc, cameraPosition);
 vec3 p = position;
+p.xz *= uScale;
 float yaw = r3 * 6.2831853;
 p.xz = mat2(cos(yaw), sin(yaw), -sin(yaw), cos(yaw)) * p.xz;
 p.y *= h * (0.94 + 0.12 * r1);
@@ -199,11 +221,11 @@ if (isCut) {
   vColor.rgb = mix(vColor.rgb, vec3(0.56, 0.47, 0.3), 0.5);
 #endif
 }
-// 曲げ：風、リール、デバイダ、倒伏
+// 曲げ：風、リール、デバイダ、倒伏（2 = 押し倒された、3 = 倒れているが刈れる）
 float th = 0.035 + 0.03 * (sin(uTime * 1.3 + cellPos.x * 0.35 + cellPos.y * 0.21) * 0.6 + sin(uTime * 2.3 + cellPos.x * 0.9 - cellPos.y * 0.4) * 0.4);
 vec2 dir = normalize(vec2(0.8, 0.6));
-if (state > 1.5) {
-  th = 1.3 + 0.2 * r1;
+if (state > 1.5 && state < 3.5) {
+  th = (state > 2.5 ? 0.85 : 1.3) + 0.2 * r1;
   float a = st.b * 6.2831853 + (r2 - 0.5) * 0.6;
   dir = vec2(cos(a), sin(a));
 } else if (!isCut && uKnife.z > 0.5) {
@@ -233,12 +255,14 @@ if (camDist > uLodR) transformed = vec3(cellPos.x, -2.0, cellPos.y);
 #else
 if (camDist <= uLodR) transformed = vec3(cellPos.x, -2.0, cellPos.y);
 #endif
+if (state > 3.5) transformed = vec3(cellPos.x, -2.0, cellPos.y); // 作物なし
 `;
 
 interface Uniforms {
   uState: { value: DataTexture };
   uNx: { value: number };
   uCell: { value: number };
+  uScale: { value: number };
   uTime: { value: number };
   uLodR: { value: number };
   uKnife: { value: Vector4 };
@@ -262,30 +286,33 @@ function cropMaterial(u: Uniforms, near: boolean): MeshLambertMaterial {
 }
 
 /** 地面：圃場の中はセルの状態で色を変える（立毛の下は陰の麦わら色、刈り跡は刈り株、倒伏は明るい麦わら）。外は枕地 */
-function groundMaterial(u: Uniforms, size: [number, number]): MeshLambertMaterial {
+function groundMaterial(u: Uniforms, size: [number, number], headland: number): MeshLambertMaterial {
   // 地面は真上からの光をまともに受けて白く飛ぶので、材質の色で全体を落とす
   const m = new MeshLambertMaterial({ color: 0x8c8c8c });
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, u, { uSize: { value: new Vector2(...size) } });
+    Object.assign(sh.uniforms, u, { uSize: { value: new Vector2(...size) }, uHeadland: { value: headland } });
     sh.vertexShader = 'varying vec2 vF;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvF = position.xz;');
     sh.fragmentShader =
-      'varying vec2 vF;\nuniform sampler2D uState;\nuniform float uCell;\nuniform float uLow;\nuniform vec2 uSize;\nfloat hash2(vec2 p){return fract(sin(dot(p, vec2(12.9898,78.233)))*43758.5453);}\n' +
+      'varying vec2 vF;\nuniform sampler2D uState;\nuniform float uCell;\nuniform float uLow;\nuniform float uHeadland;\nuniform vec2 uSize;\nfloat hash2(vec2 p){return fract(sin(dot(p, vec2(12.9898,78.233)))*43758.5453);}\n' +
       sh.fragmentShader.replace(
         '#include <color_fragment>',
         /* glsl */ `
         vec3 col;
         float n = hash2(floor(vF * 8.0)) * 0.12;
         float rowStripe = 0.06 * sin(vF.y * 33.07);
+        // 枕地の色（作物の範囲の外、と範囲の中の作物なしのセル）。枕地の外は草地へ
+        float far = smoothstep(uHeadland + 1.0, uHeadland + 9.0, max(max(-vF.x, vF.x - uSize.x), max(-vF.y, vF.y - uSize.y)));
+        vec3 headlandCol = mix(vec3(0.40, 0.34, 0.22) + rowStripe * 0.5, vec3(0.24, 0.27, 0.17), far) + n * 0.5;
         if (vF.x < 0.0 || vF.y < 0.0 || vF.x >= uSize.x || vF.y >= uSize.y) {
-          float far = smoothstep(26.0, 34.0, max(max(-vF.x, vF.x - uSize.x), max(-vF.y, vF.y - uSize.y)));
-          col = mix(vec3(0.40, 0.34, 0.22) + rowStripe * 0.5, vec3(0.24, 0.27, 0.17), far) + n * 0.5;
+          col = headlandCol;
         } else {
           ivec2 c = ivec2(floor(vF / uCell));
           vec4 st = texelFetch(uState, c, 0);
           float s = floor(st.r * 255.0 + 0.5);
-          if (s < 0.5) col = mix(vec3(0.22, 0.17, 0.09), vec3(0.62, 0.46, 0.2), uLow) + n * 0.4;
+          if (s < 0.5 || (s > 2.5 && s < 3.5)) col = mix(vec3(0.22, 0.17, 0.09), vec3(0.62, 0.46, 0.2), uLow) + n * 0.4;
           else if (s < 1.5) col = vec3(0.5, 0.42, 0.27) + rowStripe + n * 0.6;
-          else col = vec3(0.62, 0.52, 0.32) + n * 0.5;
+          else if (s < 2.5) col = vec3(0.62, 0.52, 0.32) + n * 0.5;
+          else col = headlandCol;
         }
         diffuseColor.rgb *= col;
         `,
@@ -305,7 +332,7 @@ export class FieldView {
   readonly uniforms: Uniforms;
   private data: Uint8Array;
   private tex: DataTexture;
-  private lastVersion = -1;
+  private chunkCells = 20;
   private chunks: Array<{ mesh: Mesh; center: Vector3 }> = [];
   private far: Mesh;
   private m = new Matrix4();
@@ -314,7 +341,7 @@ export class FieldView {
   /** 描いている近い株のまとまりの数（テスト用） */
   nearChunks = 0;
 
-  constructor(private field: WheatField) {
+  constructor(private field: WheatField, opts: FieldViewOptions = {}) {
     this.root.name = 'field';
     this.root.matrixAutoUpdate = false;
     const f = field;
@@ -324,6 +351,7 @@ export class FieldView {
       uState: { value: this.tex },
       uNx: { value: f.nx },
       uCell: { value: f.cell },
+      uScale: { value: f.cell / 0.25 },
       uTime: { value: 0 },
       uLodR: { value: LOD_R },
       uKnife: { value: new Vector4(5.3, spec.header.width / 2, 0, 0.8) },
@@ -331,22 +359,27 @@ export class FieldView {
       uRight: { value: new Vector2(0, 1) },
       uLow: { value: 0 },
     };
-    this.syncTexture();
+    this.syncTexture(true);
 
-    // 遠くの株：圃場全体を 1 回で描く
-    const farGeo = this.instanced(farClumpGeometry(), Array.from({ length: f.nx * f.nz }, (_, i) => i));
+    // 遠くの株：圃場全体を 1 回で描く（作物のないセルは除く）
+    const cropCells: number[] = [];
+    for (let j = 0; j < f.nx * f.nz; j++) if (f.state[j] !== NONE_STATE) cropCells.push(j);
+    const farGeo = this.instanced(farClumpGeometry(), cropCells);
     this.far = new Mesh(farGeo, cropMaterial(this.uniforms, false));
     this.far.frustumCulled = false;
     this.far.name = 'field:far';
     this.root.add(this.far);
 
     // 近い株：5 m 角のまとまり
-    const nearBase = nearClumpGeometry();
+    const nearBase = nearClumpGeometry(3, f.cell > 0.3 ? 10 : 7);
     const nearMat = cropMaterial(this.uniforms, true);
+    const CHUNK = Math.max(1, Math.round(CHUNK_M / f.cell));
+    this.chunkCells = CHUNK;
     for (let k0 = 0; k0 < f.nz; k0 += CHUNK) {
       for (let i0 = 0; i0 < f.nx; i0 += CHUNK) {
         const cells: number[] = [];
-        for (let k = k0; k < Math.min(f.nz, k0 + CHUNK); k++) for (let i = i0; i < Math.min(f.nx, i0 + CHUNK); i++) cells.push(k * f.nx + i);
+        for (let k = k0; k < Math.min(f.nz, k0 + CHUNK); k++) for (let i = i0; i < Math.min(f.nx, i0 + CHUNK); i++) if (f.state[k * f.nx + i] !== NONE_STATE) cells.push(k * f.nx + i);
+        if (cells.length === 0) continue;
         const g = this.instanced(nearBase, cells);
         const center = new Vector3((i0 + CHUNK / 2) * f.cell, 0.5, (k0 + CHUNK / 2) * f.cell);
         g.boundingSphere = new Sphere(center.clone(), (CHUNK * f.cell) / Math.SQRT2 + 1.5);
@@ -359,8 +392,8 @@ export class FieldView {
     }
 
     // 地面：圃場＋枕地、その外の広い地面
-    const hl = spec.field.headland;
-    const ground = new Mesh(this.quad(-hl - 60, -hl - 60, f.length + hl + 60, f.width + hl + 60), groundMaterial(this.uniforms, [f.length, f.width]));
+    const hl = opts.headland ?? spec.field.headland;
+    const ground = new Mesh(this.quad(-hl - 60, -hl - 60, f.length + hl + 60, f.width + hl + 60), groundMaterial(this.uniforms, [f.length, f.width], hl));
     ground.name = 'field:ground';
     ground.position.y = -0.003;
     ground.updateMatrix();
@@ -413,25 +446,28 @@ export class FieldView {
     this.cart.visible = false;
   }
 
-  private syncTexture() {
+  /** 状態テクスチャを書く。最初と差し替え時は全体、そのあとは変わった行だけ転送する */
+  private syncTexture(full = false) {
     const f = this.field;
-    if (f.version === this.lastVersion) return;
-    this.lastVersion = f.version;
+    const dirty = f.takeDirty();
+    if (!full && !dirty) return;
+    const [k0, k1] = full ? [0, f.nz - 1] : dirty!;
     const d = this.data;
-    const n = f.nx * f.nz;
-    for (let j = 0; j < n; j++) {
+    const TAU = 2 * Math.PI;
+    for (let j = k0 * f.nx; j < (k1 + 1) * f.nx; j++) {
       const o = j * 4;
       const s = f.state[j];
       d[o] = s;
       d[o + 1] = Math.min(255, Math.round((f.height[j] / 1.5) * 255));
-      d[o + 2] = s === FLAT ? Math.round((((f.flatDir[j] % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI) * 255) : 0;
+      d[o + 2] = s === FLAT || s === LODGED ? Math.round((((f.flatDir[j] % TAU) + TAU) % TAU) / TAU * 255) : 0;
       d[o + 3] = s === CUT ? Math.min(255, Math.round((f.stubble[j] / 0.6) * 255)) : 0;
     }
+    if (!full) for (let k = k0; k <= k1; k++) this.tex.addUpdateRange(k * f.nx * 4, f.nx * 4);
     this.tex.needsUpdate = true;
   }
 
   /** 毎フレーム：機体の位置で圃場を置き直し、状態テクスチャ・シェーダの値・近い株のまとまりを更新する */
-  update(sc: HarvestScenario, cameraWorld: Vector3, time: number) {
+  update(sc: FieldViewSource, cameraWorld: Vector3, time: number) {
     const pl = sc.place;
     // 機体 → 圃場：平行移動 (x, 0, z) × Y 軸回り psi
     this.m.makeRotationY(pl.psi).setPosition(pl.x, 0, pl.z);
@@ -451,7 +487,7 @@ export class FieldView {
 
     // 近い株のまとまり：カメラ（圃場座標）から LOD_R ＋ まとまりの半径 以内
     const cam = this.tmp.copy(cameraWorld).applyMatrix4(this.m);
-    const reach = LOD_R + (CHUNK * this.field.cell) / Math.SQRT2 + 0.5;
+    const reach = LOD_R + (this.chunkCells * this.field.cell) / Math.SQRT2 + 0.5;
     let n = 0;
     for (const ch of this.chunks) {
       ch.mesh.visible = this.quality === 'high' && ch.center.distanceTo(cam) < reach;
@@ -459,9 +495,9 @@ export class FieldView {
     }
     this.nearChunks = n;
 
-    // 運搬車：スパウトの下（機体座標）
-    this.cart.visible = sc.unloadReq && sc.laneClear;
-    this.cart.position.set(sc.spoutTip.x, 0, sc.spoutTip.z);
+    // 運搬車（機体座標）
+    this.cart.visible = !!sc.cart?.visible;
+    if (sc.cart) this.cart.position.set(sc.cart.x, 0, sc.cart.z);
   }
 
   setVisible(on: boolean) {
@@ -481,8 +517,7 @@ export class FieldView {
   /** 新しい圃場に差し替える（シナリオのやり直し） */
   setField(field: WheatField) {
     this.field = field;
-    this.lastVersion = -1;
-    this.syncTexture();
+    this.syncTexture(true);
   }
 }
 

@@ -1,5 +1,6 @@
 /**
- * 小麦の圃場（design §16.5、M6）。0.25 m 角のセルごとに草丈・穀粒の量・状態を持つ。
+ * 小麦の圃場（design §16.5、M6）。セル（M6 は 0.25 m、ゲームは 0.5 m 角）ごとに草丈・穀粒の量・状態を持つ。
+ * 長方形の外接範囲を格子にし、作物のない所（ゲームの畑の形の外・障害物）は NONE にする。
  *
  * 圃場座標：X ＝ 長辺（0〜length）、Z ＝ 短辺（0〜width）、Y 上。three と同じ右手系。
  * 機体の位置は前車軸中心 (x, z) と向き psi（Y 軸回り）。機体座標 → 圃場座標は
@@ -12,6 +13,20 @@ import { spec } from '../spec/spec';
 export const STANDING = 0;
 export const CUT = 1;
 export const FLAT = 2; // 機体に押し倒された（刈れない）
+export const LODGED = 3; // 倒れているが刈れる（ゲーム、game-design §6）
+export const NONE = 4; // 作物なし（畑の形の外・障害物・水たまり）
+
+/** 刈れる（立っている）セルか */
+export const isStanding = (s: number) => s === STANDING || s === LODGED;
+
+/** セルごとの値を外から決める（ゲームのマップ生成。決定的な関数で作る） */
+export interface CellSample {
+  crop: boolean;
+  height: number; // m
+  yieldFactor: number; // 平均に対する倍率
+  lodged?: boolean;
+  lodgedDir?: number; // rad（圃場座標）
+}
 
 export interface FieldOptions {
   length: number;
@@ -22,6 +37,9 @@ export interface FieldOptions {
   heightNoise: number;
   yieldNoise: number;
   seed: number;
+  /** 指定するとゆらぎの代わりにこれを使う。乱れも jitter（0〜1）から取る */
+  sample?: (X: number, Z: number) => CellSample;
+  jitter?: () => number;
 }
 
 export function defaultFieldOptions(): FieldOptions {
@@ -100,6 +118,11 @@ export class WheatField {
   readonly cutTag: Uint8Array;
   /** 状態が変わるたびに増える（描画の更新判定） */
   version = 0;
+  /** 前回 takeDirty() してから状態が変わった行の範囲 */
+  private dirtyK0 = Infinity;
+  private dirtyK1 = -1;
+  /** 作物のあるセルの数と、穀粒の合計 [kg] */
+  readonly cropCells: number;
   readonly totalGrain: number;
   readonly opts: FieldOptions;
 
@@ -117,39 +140,99 @@ export class WheatField {
     this.stubble = new Float32Array(n);
     this.flatDir = new Float32Array(n);
     this.cutTag = new Uint8Array(n);
-    const r = rng(o.seed);
-    const hN = smoothNoise(r);
-    const yN = smoothNoise(r);
+    const r = o.jitter ?? rng(o.seed);
+    const hN = o.sample ? null : smoothNoise(r);
+    const yN = o.sample ? null : smoothNoise(r);
     const perCell = (o.yield * 0.1) * o.cell * o.cell; // t/ha → kg/m²
     let sum = 0;
+    let crop = 0;
     for (let k = 0; k < this.nz; k++) {
       for (let i = 0; i < this.nx; i++) {
         const [X, Z] = this.center(i, k);
         const idx = k * this.nx + i;
-        this.height[idx] = o.cropHeight + o.heightNoise * hN(X, Z) + (r() - 0.5) * 0.03;
-        const g = perCell * (1 + o.yieldNoise * yN(X, Z) * 2) * (0.9 + r() * 0.2);
+        let g: number;
+        if (o.sample) {
+          const c = o.sample(X, Z);
+          if (!c.crop) {
+            this.state[idx] = NONE;
+            continue;
+          }
+          this.height[idx] = c.height + (r() - 0.5) * 0.03;
+          g = perCell * c.yieldFactor * (0.9 + r() * 0.2);
+          if (c.lodged) {
+            this.state[idx] = LODGED;
+            this.flatDir[idx] = c.lodgedDir ?? 0;
+          }
+        } else {
+          this.height[idx] = o.cropHeight + o.heightNoise * hN!(X, Z) + (r() - 0.5) * 0.03;
+          g = perCell * (1 + o.yieldNoise * yN!(X, Z) * 2) * (0.9 + r() * 0.2);
+        }
         this.grain[idx] = g;
         sum += g;
+        crop++;
       }
     }
-    // 圃場全体の平均が指定の収量になるようにそろえる
-    const scale = (perCell * n) / sum;
+    // 作物のあるセルの平均が指定の収量になるようにそろえる（収量のむらは sample の倍率の相対値として残す）
+    const target = o.sample ? perCell * this.meanFactor(o.sample) * crop : perCell * crop;
+    const scale = sum > 0 ? target / sum : 0;
     for (let j = 0; j < n; j++) this.grain[j] *= scale;
-    this.totalGrain = perCell * n;
+    this.cropCells = crop;
+    this.totalGrain = target;
+  }
+
+  /** sample の収量倍率の平均（セルの中心で） */
+  private meanFactor(sample: (X: number, Z: number) => CellSample): number {
+    let s = 0;
+    let n = 0;
+    for (let k = 0; k < this.nz; k++) {
+      for (let i = 0; i < this.nx; i++) {
+        const [X, Z] = this.center(i, k);
+        const c = sample(X, Z);
+        if (!c.crop) continue;
+        s += c.yieldFactor;
+        n++;
+      }
+    }
+    return n > 0 ? s / n : 1;
+  }
+
+  /** セルの状態を変える（描画の更新範囲も記録する） */
+  set(idx: number, state: number) {
+    this.state[idx] = state;
+    const k = Math.floor(idx / this.nx);
+    if (k < this.dirtyK0) this.dirtyK0 = k;
+    if (k > this.dirtyK1) this.dirtyK1 = k;
+  }
+
+  /** 押し倒す（dir は倒れた向き、圃場座標の角度） */
+  setFlat(idx: number, dir: number) {
+    this.flatDir[idx] = dir;
+    this.set(idx, FLAT);
+    this.version++;
+  }
+
+  /** 前回から状態が変わった行の範囲（なければ null）。呼ぶと記録を消す */
+  takeDirty(): [number, number] | null {
+    if (this.dirtyK1 < 0) return null;
+    const r: [number, number] = [this.dirtyK0, this.dirtyK1];
+    this.dirtyK0 = Infinity;
+    this.dirtyK1 = -1;
+    return r;
   }
 
   center(i: number, k: number): [number, number] {
     return [(i + 0.5) * this.cell, (k + 0.5) * this.cell];
   }
 
+  /** standing は倒れているが刈れるセル（LODGED）を含む。NONE は数えない */
   counts(): { standing: number; cut: number; flat: number } {
     let standing = 0;
     let cut = 0;
     let flat = 0;
     for (const s of this.state) {
-      if (s === STANDING) standing++;
+      if (isStanding(s)) standing++;
       else if (s === CUT) cut++;
-      else flat++;
+      else if (s === FLAT) flat++;
     }
     return { standing, cut, flat };
   }
@@ -173,6 +256,8 @@ export class WheatField {
   sweepCut(
     a0: [number, number], b0: [number, number], a1: [number, number], b1: [number, number],
     canCut: (idx: number) => boolean, stubble: number, tag: number, onMiss?: (idx: number) => void,
+    /** 刈ったセルの穀粒のうち、取り込める割合（倒れた小麦を速く刈ったときなど。省略時は 1） */
+    take?: (idx: number) => number,
   ): { grain: number; cells: number; overlap: number } {
     const poly = [a0, b0, b1, a1];
     const xs = poly.map((p) => p[0]);
@@ -209,15 +294,16 @@ export class WheatField {
           if (this.cutTag[idx] !== tag) overlap++;
           continue;
         }
-        if (st !== STANDING) continue;
+        if (!isStanding(st)) continue;
         if (!canCut(idx)) {
           onMiss?.(idx);
           continue;
         }
-        this.state[idx] = CUT;
+        const share = take ? take(idx) : 1;
+        this.set(idx, CUT);
         this.stubble[idx] = stubble;
         this.cutTag[idx] = tag;
-        grain += this.grain[idx];
+        grain += this.grain[idx] * share;
         cells++;
       }
     }
@@ -242,12 +328,13 @@ export class WheatField {
   }
 
   /** 立っている作物を押し倒す（下端の高さ bottom が草丈より低い部品の下だけ）。倒したセル数を返す */
-  flattenUnder(m: MachinePlace, r: Rect, bottom: number, dir: number): number {
+  flattenUnder(m: MachinePlace, r: Rect, bottom: number, dir: number, onFlat?: (idx: number) => void): number {
     let n = 0;
     this.forEachUnder(m, r, (idx) => {
-      if (this.state[idx] !== STANDING || this.height[idx] <= bottom) return;
-      this.state[idx] = FLAT;
+      if (!isStanding(this.state[idx]) || this.height[idx] <= bottom) return;
       this.flatDir[idx] = dir;
+      this.set(idx, FLAT);
+      onFlat?.(idx);
       n++;
     });
     if (n > 0) this.version++;
@@ -258,7 +345,7 @@ export class WheatField {
   anyStanding(m: MachinePlace, r: Rect): boolean {
     let found = false;
     this.forEachUnder(m, r, (idx) => {
-      if (this.state[idx] === STANDING) found = true;
+      if (isStanding(this.state[idx])) found = true;
     });
     return found;
   }
@@ -275,7 +362,7 @@ export class WheatField {
       for (let i = i0; i <= i1; i++) {
         const X = (i + 0.5) * this.cell;
         if (X < x0 || X > x1) continue;
-        if (this.state[k * this.nx + i] === STANDING) row++;
+        if (isStanding(this.state[k * this.nx + i])) row++;
       }
       count += row;
       if (row > 0) {

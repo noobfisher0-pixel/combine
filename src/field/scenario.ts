@@ -9,15 +9,14 @@
  * - W-8：タンクが満杯で止まらないこと（運搬車が刈り跡の側を走れる行程で、走りながら排出する）。
  */
 import { Vector3 } from 'three';
-import { place } from '../collision/check';
 import { cutHeight, harvestReport, headerAngleForCut, mogFromCut, suggestedReelLift, tankCapacity, type Check, type HarvestReport } from '../model/harvest';
-import { HEADER_MOUNTS, mountMatrices, UNLOAD_POSE, WORK_POSE } from '../model/kinematics';
-import { headerLowestY } from '../model/limits';
+import { mountMatrices, UNLOAD_POSE, WORK_POSE } from '../model/kinematics';
 import { ACTUATOR_RATES, approachPose } from '../model/machine';
-import { buildParts, unloadElbow } from '../model/parts';
+import { unloadElbow } from '../model/parts';
 import type { Pose } from '../model/types';
 import { spec } from '../spec/spec';
-import { defaultFieldOptions, FLAT, toField, WheatField, type MachinePlace, type Rect } from './field';
+import { defaultFieldOptions, toField, WheatField, type MachinePlace, type Rect } from './field';
+import { HeaderLowest, machineFootprint } from './footprint';
 import { Path, steerFor, uTurn, type Segment } from './path';
 
 export interface ScenarioParams {
@@ -174,7 +173,7 @@ export class HarvestScenario {
   private readonly bodyRects: Array<Rect & { bottom: number }>;
   private readonly lane: Rect;
   private readonly headerBack: number;
-  private readonly lowestCache = new Map<number, number>();
+  private readonly lowest = new HeaderLowest();
   private readonly hw = spec.header.width / 2;
   readonly headerInside: boolean;
   readonly dividerAhead: boolean;
@@ -195,16 +194,11 @@ export class HarvestScenario {
     this.base = harvestReport(workPose, cond);
 
     // 部品の足跡：ヘッダ以外で、下端が作物の高さより低いもの
-    const parts = buildParts();
-    const placed = place(parts, workPose);
-    this.bodyRects = placed
-      .filter((q) => !HEADER_MOUNTS.has(q.part.mount) && q.box.min[1] < p.cropHeight + 0.3)
-      .map((q) => ({ x0: q.box.min[0], x1: q.box.max[0], z0: q.box.min[2], z1: q.box.max[2], bottom: q.box.min[1] }));
-    const header = placed.filter((q) => HEADER_MOUNTS.has(q.part.mount));
-    this.headerBack = Math.min(...header.map((q) => q.box.min[0]));
-    this.headerInside = header.every((q) => Math.max(Math.abs(q.box.min[2]), Math.abs(q.box.max[2])) <= this.hw + 1e-6);
-    const divider = header.filter((q) => q.part.id.startsWith('header.divider'));
-    this.dividerAhead = divider.length > 0 && divider.every((q) => q.box.max[0] > spec.header.cutterbar.x[1]);
+    const fp = machineFootprint(workPose, p.cropHeight + 0.3);
+    this.bodyRects = fp.body;
+    this.headerBack = fp.headerBack;
+    this.headerInside = fp.headerInside;
+    this.dividerAhead = fp.dividerAhead;
 
     // 運搬車の通り道：排出姿勢のスパウトの下、機体と並んで走る長さ
     const u = spec.unload;
@@ -259,13 +253,7 @@ export class HarvestScenario {
   }
 
   private headerLowest(): number {
-    const key = Math.round(this.pose.headerAngle * 4) / 4;
-    let y = this.lowestCache.get(key);
-    if (y === undefined) {
-      y = headerLowestY({ ...this.pose, headerAngle: key });
-      this.lowestCache.set(key, y);
-    }
-    return y;
+    return this.lowest.get(this.pose);
   }
 
   private inCrop(X: number, Z: number, margin: number): boolean {
@@ -360,10 +348,8 @@ export class HarvestScenario {
         (idx) => {
           // 穂に届かない高さで作物に当たる：押し倒す
           if (knifeY < field.height[idx]) {
-            field.state[idx] = FLAT;
-            field.flatDir[idx] = heading;
+            field.setFlat(idx, heading);
             this.flattenedByHeader++;
-            field.version++;
           }
         },
       );
@@ -525,6 +511,11 @@ export class HarvestScenario {
       tankSeries: [...this.tankSeries],
       log: [...this.log],
     };
+  }
+
+  /** 運搬車の表示（圃場の描画用、機体座標） */
+  get cart() {
+    return { visible: this.unloadReq && this.laneClear, x: this.spoutTip.x, z: this.spoutTip.z };
   }
 
   /** 状態の数（テスト・画面用） */
