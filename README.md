@@ -36,6 +36,7 @@ npm run build        # 型チェック＋本番ビルド（dist/）
 |---|---|
 | [docs/design.md](docs/design.md) | 設計書（座標系・全体配置・パーツ階層・動き・作物フロー・表示モード・コード構成・マイルストーン） |
 | [docs/review.md](docs/review.md) | 設計レビューの指摘と対応状況 |
+| [docs/game-design.md](docs/game-design.md) | 収穫ゲームの設計書（ルール・操作・バランス・マップ生成・カートの AI・マイルストーン G0〜G4、レビュー G-R-01〜17） |
 | [docs/layout-check.py](docs/layout-check.py) | v0.2 時点の隙間・寸法の検算（記録。現在は `tests/` が正） |
 | [docs/research/01-header-feeder.md](docs/research/01-header-feeder.md) | 資料：刈取部（ドレーパー／コーンヘッド）とフィーダハウス |
 | [docs/research/02-threshing-cleaning.md](docs/research/02-threshing-cleaning.md) | 資料：脱穀・分離（ロータ）と選別（シュー・ファン） |
