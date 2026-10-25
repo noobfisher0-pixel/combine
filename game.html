@@ -74,6 +74,12 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 .mini.big .note{max-width:none}
 .keys button{font:600 11px var(--f-ui);padding:2px 8px;margin:0 0 0 6px;background:#26302e;color:var(--ink);border:1px solid var(--line)}
 .keys button.wait{border-color:var(--warn);color:var(--warn)}
+.pop{position:absolute;left:100%;top:14px;margin-left:8px;font:700 18px var(--f-num);color:var(--ok);white-space:nowrap;opacity:0;pointer-events:none}
+.pop.show{animation:pop 1.6s ease-out}
+@keyframes pop{0%{opacity:0;transform:translateY(6px)}15%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
+.rank.reveal{animation:reveal .7s cubic-bezier(.2,1.6,.4,1)}
+@keyframes reveal{0%{transform:scale(.2);opacity:0}100%{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion: reduce){.pop.show,.rank.reveal{animation:none;opacity:1}}
 </style>
 </head>
 <body>
@@ -81,7 +87,7 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 
 <section class="hud top" aria-live="off">
   <div><span class="k">残り時間</span><span class="v" id="time">4:00</span></div>
-  <div><span class="k">得点（トラック）</span><span class="v" id="score">0.0<span class="unit">t</span></span></div>
+  <div style="position:relative"><span class="k">得点（トラック）</span><span class="v" id="score">0.0<span class="unit">t</span></span><span class="pop" id="pop"></span></div>
   <div><span class="k">最後の受け渡しまで</span><span class="v" id="handoff" style="font-size:18px">―</span></div>
 </section>
 <section class="hud tut" id="tut" hidden>
@@ -111,7 +117,7 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
 
 <div class="overlay" id="start">
   <div class="card">
-    <h1>コンバイン収穫ゲーム <span class="tag">G3 試作</span></h1>
+    <h1>コンバイン収穫ゲーム <span class="tag">G4</span></h1>
     <p>制限時間のあいだに小麦を刈り、グレインカートで畑の端のトラックへ運びます。<b>トラックに入った量が得点</b>です。</p>
     <div class="keys" id="keyList"></div>
     <p class="note">負荷が 100 % を超えると取りこぼしが急に増えます。タンクが満杯の間に届いた小麦は失われます。カートは刈った跡しか走れず、排出は左側です。左側が刈り跡になるように回りましょう。</p>
@@ -152,6 +158,7 @@ body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-ui);overflow:hi
       <label><input type="checkbox" id="optGuide"> ガイドライン（回り刈りの次の線）</label><span></span>
       <label><input type="checkbox" id="optMouse"> マウスで操舵（画面の左右の位置で切れ角）</label><span></span>
       <label><input type="checkbox" id="optLow"> 小麦を描かない（軽量表示）</label><span></span>
+      <label><input type="checkbox" id="optSound"> 音を鳴らす（M キーでも切り替え）</label><span></span>
     </div>
     <button id="settingsClose">閉じる</button>
     <button class="sub" id="keysReset">キーを元に戻す</button>

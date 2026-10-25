@@ -68,7 +68,10 @@ export const MAP_RULES = {
   area: [5000, 12600] as const, // m²（0.5〜1.26 ha）
   spacing: 14, // m：障害物どうし・障害物と作物の縁の「すき間」（外周どうし）。刈幅 12.19 m より広く、間を通れる
   truckFromCorner: [20, 60] as const,
-  obstacles: { easy: [0, 0], normal: [0, 3], hard: [2, 6] } as const,
+  obstacles: { easy: [0, 0], normal: [0, 3], hard: [3, 7] } as const,
+  /** むずかしいだけ（G4 で増やした、§19） */
+  lodged: { count: [2, 4] as const, radius: [7, 12] as const },
+  water: { count: [2, 3] as const, radius: [5, 8] as const },
   maxAttempts: 10,
 };
 
@@ -202,17 +205,19 @@ function draft(seed: string, difficulty: Difficulty, attempt: number): MapPlan {
   const lodged: MapPlan['lodged'] = [];
   const water: Circle[] = [];
   if (difficulty === 'hard') {
-    const nL = 1 + Math.floor(r() * 3);
+    const L = MAP_RULES.lodged;
+    const nL = L.count[0] + Math.floor(r() * (L.count[1] - L.count[0] + 1));
     for (let i = 0; i < nL; i++) {
       const p = randomInside(8);
-      if (p) lodged.push({ x: p[0], z: p[1], r: range(5, 9), dir: range(0, 6.283185307179586) });
+      if (p) lodged.push({ x: p[0], z: p[1], r: range(...L.radius), dir: range(0, 6.283185307179586) });
     }
-    const nW = 1 + Math.floor(r() * 2);
+    const Wr = MAP_RULES.water;
+    const nW = Wr.count[0] + Math.floor(r() * (Wr.count[1] - Wr.count[0] + 1));
     for (let i = 0; i < nW; i++) {
       for (let t = 0; t < 30; t++) {
         const p = randomInside(10);
         if (!p) break;
-        const wr = range(4, 7);
+        const wr = range(...Wr.radius);
         if (obstacles.every((o) => Math.sqrt((o.x - p[0]) ** 2 + (o.z - p[1]) ** 2) >= MAP_RULES.spacing + o.r + wr)) {
           water.push({ x: p[0], z: p[1], r: wr });
           break;

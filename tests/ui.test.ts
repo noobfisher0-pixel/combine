@@ -78,8 +78,8 @@ describe('設定と記録', () => {
     const k = { ...DEFAULT_KEYS, cart: 'KeyT' };
     saveKeys(k, st);
     expect(loadKeys(st).cart).toBe('KeyT');
-    saveOptions({ guide: false, mouseSteer: true, quality: 'low' }, st);
-    expect(loadOptions(st)).toEqual({ guide: false, mouseSteer: true, quality: 'low' });
+    saveOptions({ guide: false, mouseSteer: true, quality: 'low', sound: false }, st);
+    expect(loadOptions(st)).toEqual({ guide: false, mouseSteer: true, quality: 'low', sound: false });
     st.setItem('combine-game:keys', '{壊れた');
     expect(loadKeys(st)).toEqual(DEFAULT_KEYS);
     expect(loadKeys(null)).toEqual(DEFAULT_KEYS);

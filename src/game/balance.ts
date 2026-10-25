@@ -2,7 +2,7 @@
  * ゲームのバランス表（docs/game-design.md §5）。時間の値はすべてゲームの時計（実時間 × TIME_SCALE）。
  * 値を変えたら BALANCE_VERSION を上げる（同じシードでも結果が変わるので、共有の文字列とベスト記録を分ける）。
  */
-export const BALANCE_VERSION = 1;
+export const BALANCE_VERSION = 2; // 2：むずかしいの障害物・倒れた小麦・水たまりを増やした（G4）
 
 export const BALANCE = {
   /** ゲームの時計 ／ 実時間 */
@@ -45,7 +45,7 @@ export const BALANCE = {
     lossMax: 0.9,
     /** 倒れた小麦（LODGED）をこの速さより速く刈ると、lodgedLoss を失う */
     lodgedSpeed: 4, // km/h
-    lodgedLoss: 0.3,
+    lodgedLoss: 0.4, // G4：0.3 → 0.4（倒れた小麦の前で速度を落とす判断を大事にする）
     /** 予測の負荷を計算する、刈刃の前の距離 [m] */
     predictAhead: 5,
   },

@@ -16,10 +16,11 @@ describe('標準マップ（ふつう）', () => {
     expect(r.rank).toBe('A');
     expect(r.collisions).toBe(0);
   });
-  it('回り刈りは往復刈りより 3 割以上よい（往復刈りでは、半分の行程でカートが並走できない）', () => {
+  it('回り刈りは往復刈りよりよい。往復刈りは −X の行程でカートが来られず、あふれとタンクの残りが出る（G4 で測り直し、§19）', () => {
     const b = runBot(new GameSim(standardMap()), { pattern: 'backforth' });
-    expect(r.score).toBeGreaterThan(b.score * 1.3);
-    expect(b.losses.overflow + b.losses.leftInTank).toBeGreaterThan(5000);
+    expect(r.score).toBeGreaterThan(b.score);
+    expect(b.losses.overflow).toBeGreaterThan(1000);
+    expect(r.losses.overflow).toBe(0);
   });
   it('遅すぎる（4 km/h）・速すぎる（7 km/h）運転は、負荷ホールドのボットより点が低い', () => {
     const slow = runBot(new GameSim(standardMap()), { speed: 4 });
@@ -34,12 +35,13 @@ describe('標準マップ（ふつう）', () => {
 });
 
 describe('自動生成のマップ（各 8 シード）', () => {
-  for (const d of ['normal', 'hard'] as const) {
-    it(`${d}：ボットはぶつからずに走り切り、上限の 5 割以上を取る`, () => {
+  // むずかしいは G4 で倒れた小麦・水たまりを増やしたので、ボットでも 4 割台のマップがある
+  for (const [d, floor] of [['normal', 0.5], ['hard', 0.4]] as const) {
+    it(`${d}：ボットはぶつからずに走り切り、上限の ${floor * 100} % 以上を取る`, () => {
       for (let i = 0; i < 8; i++) {
         const r = runBot(new GameSim(generateMap(`bot-${i}`, d), { difficulty: d }));
         expect(r.collisions, `bot-${i}`).toBe(0);
-        expect(r.ratio, `bot-${i}`).toBeGreaterThan(0.5);
+        expect(r.ratio, `bot-${i}`).toBeGreaterThan(floor);
         expect(r.losses.spill, `bot-${i}`).toBeLessThan(500);
       }
     });

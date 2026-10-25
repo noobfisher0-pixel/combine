@@ -128,6 +128,30 @@ test('ゲーム G3：キーの割り当て、ミニマップ、ガイドライ�
   expect(errors).toEqual([]);
 });
 
+test('ゲーム G4：開始のクリックで音が鳴り始め、M で消える。刈っている間は土ぼこりが出る', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 400)); });
+  await page.goto('/game/game.html?q=low');
+  type G = { __game: { audio: { state: string; muted: boolean }; dust: number; sim: { harvest: { feedKgS: number } } } };
+  expect(await page.evaluate(() => (window as unknown as G).__game.audio.state)).toBe('none');
+  await page.locator('input[name=map][value=standard]').check();
+  await page.locator('#startBtn').click();
+  expect(await page.evaluate(() => (window as unknown as G).__game.audio.state)).not.toBe('none');
+  await page.keyboard.press('KeyM');
+  expect(await page.evaluate(() => (window as unknown as G).__game.audio.muted)).toBe(true);
+  await page.keyboard.press('KeyM');
+  expect(await page.evaluate(() => (window as unknown as G).__game.audio.muted)).toBe(false);
+  await page.keyboard.press('Space');
+  await page.keyboard.down('KeyW');
+  await page.waitForFunction(() => (window as unknown as G).__game.sim.harvest.feedKgS > 2, undefined, { timeout: 180_000 });
+  await page.keyboard.up('KeyW');
+  await page.waitForFunction(() => (window as unknown as G).__game.dust > 5, undefined, { timeout: 120_000 });
+  await page.screenshot({ path: 'test-results/game-g4.png' });
+  expect(errors).toEqual([]);
+});
+
 test('ゲーム：チュートリアルが始まり、手順の案内が出る', async ({ page }) => {
   await page.goto('/game/game.html?q=low');
   await page.locator('#tutBtn').click();

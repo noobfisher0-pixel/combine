@@ -13,15 +13,16 @@ export const ACTION_NAMES: Record<Action, string> = {
 export const DEFAULT_KEYS: Record<Action, string> = {
   up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', header: 'Space', auger: 'KeyQ', hold: 'KeyF', cart: 'KeyE', camera: 'KeyC', guide: 'KeyG',
 };
-/** 割り当てられないキー（一時停止・やり直し・ミニマップ・修飾キー） */
-export const RESERVED = new Set(['Escape', 'KeyR', 'Tab', 'ShiftLeft', 'ShiftRight', 'Enter']);
+/** 割り当てられないキー（一時停止・やり直し・ミニマップ・音・修飾キー） */
+export const RESERVED = new Set(['Escape', 'KeyR', 'Tab', 'KeyM', 'ShiftLeft', 'ShiftRight', 'Enter']);
 
 export interface Options {
   guide: boolean;
   mouseSteer: boolean;
   quality: 'high' | 'low';
+  sound: boolean;
 }
-export const DEFAULT_OPTIONS: Options = { guide: true, mouseSteer: false, quality: 'high' };
+export const DEFAULT_OPTIONS: Options = { guide: true, mouseSteer: false, quality: 'high', sound: true };
 
 export interface BestRecord {
   score: number; // kg（ゲームの重さ）

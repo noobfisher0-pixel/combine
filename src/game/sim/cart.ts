@@ -44,6 +44,8 @@ const REPLAN = 2; // s
 const STUCK_REPLAN = 5;
 const STUCK_GIVEUP = 15;
 const AVOID = 1.5;
+/** 並走できるかを見るとき、カートの前をどこまで見るか [m] */
+const LANE_AHEAD = 6;
 /** 次の点がこれより大きく横・後ろなら、止まってその場で向きを変える（最小半径 9 m で大きく回ると作物に入るため） */
 const PIVOT_ANGLE = (60 * Math.PI) / 180;
 const PIVOT_RATE = (40 * Math.PI) / 180; // rad/s
@@ -91,6 +93,7 @@ export class Cart {
   /** 踏み倒した量（ゲームの kg）とセル数 */
   trampleLoss = 0;
   private laneBadT = 0;
+  private noseT = 0;
   private clock = 0;
   private lastNoLane = -Infinity;
   private lastArrived = -Infinity;
@@ -152,10 +155,13 @@ export class Cart {
     return Math.abs(mx) <= HOPPER_WINDOW.along && Math.abs(mz) <= HOPPER_WINDOW.side;
   }
 
-  /** 目標の位置にカートを置いたとき、下に濃い立毛・障害物がないか（並走できるか） */
+  /**
+   * 目標の位置にカートを置いたとき、下と前（LANE_AHEAD m）に濃い立毛・障害物がないか（並走できるか）。
+   * 前も見るのは、カート自身が踏み倒した跡を「通れる」と見てしまい、立毛の中を進み続けないようにするため
+   */
   laneOk(t: MachinePlace): boolean {
     const g = this.grid;
-    for (let a = CART_RECT.x0; a <= CART_RECT.x1; a += 1) {
+    for (let a = CART_RECT.x0; a <= CART_RECT.x1 + LANE_AHEAD; a += 1) {
       for (let b = CART_RECT.z0; b <= CART_RECT.z1; b += 0.8) {
         const [X, Z] = toField(t, a, b);
         const [i, k] = g.cellOf(X, Z);
@@ -172,7 +178,7 @@ export class Cart {
     const t = this.target(c, 0);
     const g = this.grid;
     const out = new Map<number, [number, number]>();
-    for (let a = CART_RECT.x0; a <= CART_RECT.x1; a += 1) {
+    for (let a = CART_RECT.x0; a <= CART_RECT.x1 + LANE_AHEAD; a += 1) {
       for (let b = CART_RECT.z0; b <= CART_RECT.z1; b += 0.8) {
         const [X, Z] = toField(t, a, b);
         const [i, k] = g.cellOf(X, Z);
@@ -266,6 +272,17 @@ export class Cart {
     }
     const [tx, tz] = this.lookahead(path);
     const [mx, mz] = toMachine(this.place, tx, tz);
+    // 鼻先（トラクタの前）が濃い立毛・障害物に入るなら、止まってその場で経路の向きへ回る
+    // （経路は荷台の中心で作るので、長い車体の前が出ることがある）。3 秒たっても出られなければ、少し踏んで進む
+    if (this.noseBlocked() && this.noseT < 3) {
+      this.noseT += GAME_DT;
+      this.accel(0);
+      const b = Math.atan2(mz, mx);
+      if (this.v < 0.5 && Math.abs(b) > 0.05) this.psi -= Math.sign(b) * Math.min(Math.abs(b), PIVOT_RATE * GAME_DT);
+      this.move();
+      return distGoal < 15;
+    }
+    if (!this.noseBlocked()) this.noseT = 0;
     const bearing = Math.atan2(mz, mx); // > 0 で右
     if (Math.abs(bearing) > PIVOT_ANGLE) {
       // 次の点が大きく後ろ：止まってその場で向きを変える（大きく回ると作物に入るため。ゲームの割り切り）
@@ -286,6 +303,20 @@ export class Cart {
     this.psi -= kappa * this.v * GAME_DT;
     this.move();
     this.eta = this.pathLength() / SPEED;
+    return false;
+  }
+
+  /** トラクタの前の 3 点（左・中・右）の少し先が、濃い立毛（強行呼び出しでなければ）か障害物・柵か */
+  private noseBlocked(): boolean {
+    if (this.v < -0.1) return false;
+    const g = this.grid;
+    for (const b of [CART_RECT.z0, 0, CART_RECT.z1]) {
+      const [X, Z] = toField(this.place, CART_RECT.x1 + 0.8, b);
+      const [i, k] = g.cellOf(X, Z);
+      if (!g.inside(i, k)) return true;
+      const raw = g.raw[g.idx(i, k)];
+      if (raw === 2 || (raw === 1 && !this.force)) return true;
+    }
     return false;
   }
 

@@ -48,6 +48,8 @@ import { runBot } from './bot';
 import { computeGuide, standingBox, type Guide } from './guide';
 import { ACTION_NAMES, ACTIONS, bestKey, bindKey, DEFAULT_KEYS, keyLabel, loadBest, loadKeys, loadOptions, recordBest, saveKeys, saveOptions, shareText, type Action } from './settings';
 import { Minimap } from './ui/minimap';
+import { GameAudio, type Cue } from './audio';
+import { Dust } from './view/dust';
 import type { BotReply, BotRequest } from './worker';
 import { KEY } from './sim/combine';
 import { GameSim, type GameEvent } from './sim/game';
@@ -86,6 +88,14 @@ const animator = new Animator(model.root, model.proxies);
 const flow = new FlowSystem(1);
 const flowView = new FlowView(flow);
 scene.add(flowView.root);
+// 効果音と土ぼこり（G4）
+const audio = new GameAudio();
+const dust = new Dust();
+dust.setViewport(window.innerHeight, 50);
+scene.add(dust.points);
+let shakeT = 0;
+let lastTick = -1;
+let popBase = 0;
 const machine: MachineState = { engineOn: true, separatorOn: true, headerOn: true, unloadOn: false, groundSpeed: 0, reelIndex: 1.2, timeScale: BALANCE.timeScale };
 
 // ---------- round ----------
@@ -116,6 +126,24 @@ let lastPath: unknown = null;
 const guideLine = new Line(new BufferGeometry(), new LineDashedMaterial({ color: 0xf2f4ef, dashSize: 1.5, gapSize: 1, transparent: true, opacity: 0.8 }));
 guideLine.frustumCulled = false;
 let guide: Guide | null = null;
+// カートからトラックへ移す穀粒の流れ（荷下ろし中だけ、圃場座標）
+const stream = new Mesh(new BoxGeometry(1, 0.35, 0.35), new MeshStandardMaterial({ color: 0xd9a441, roughness: 0.9 }));
+stream.visible = false;
+function syncStream() {
+  const c = sim.cart;
+  stream.visible = c.state === 'dumping';
+  if (!stream.visible) return;
+  const t = map.truck;
+  // カートの荷台の上（高さ 3.2 m）からトラックの荷台（2.9 m）へ
+  const ax = c.x;
+  const az = c.z;
+  const bx = t.x;
+  const bz = t.z;
+  const len = Math.hypot(bx - ax, bz - az);
+  stream.position.set((ax + bx) / 2, 3.1, (az + bz) / 2);
+  stream.scale.set(len, 1, 1);
+  stream.rotation.set(0, -Math.atan2(bz - az, bx - ax), 0);
+}
 let lastGuide = -Infinity;
 let blockers: Array<[number, number]> = [];
 
@@ -129,7 +157,9 @@ function newRound() {
   if (fieldView) scene.remove(fieldView.root);
   fieldView = new FieldView(map.field, { headland: map.headland });
   fieldView.setQuality(quality);
-  fieldView.root.add(buildProps(map), cartModel, pathLine, flag, guideLine);
+  fieldView.root.add(buildProps(map), cartModel, pathLine, flag, guideLine, stream);
+  popBase = 0;
+  lastTick = -1;
   guide = null;
   lastGuide = -Infinity;
   blockers = [];
@@ -281,6 +311,14 @@ window.addEventListener('keydown', (e) => {
   }
   if (!settingsEl.hidden) return;
   if (e.code === 'Enter' && !started) return start();
+  if (e.code === 'KeyM' && !e.repeat) {
+    options.sound = !options.sound;
+    saveOptions(options);
+    audio.setMuted(!options.sound);
+    if (options.sound) audio.cue('toggle');
+    toast(`音：${options.sound ? 'あり' : 'なし'}`);
+    return;
+  }
   if (e.code === 'Tab') {
     e.preventDefault();
     $('mini').classList.toggle('big');
@@ -354,6 +392,13 @@ function updateCamera(dtReal: number) {
     : camMode === '高い追従' ? [new Vector3(-24, 22, 0), new Vector3(10, 0, 0)]
     : [new Vector3(-4, 70, 0), new Vector3(8, 0, 0)];
   camera.position.copy(pos.applyMatrix4(rot));
+  // 衝突でカメラを少し揺らす
+  if (shakeT > 0 && !reducedMotion) {
+    shakeT = Math.max(0, shakeT - dtReal);
+    const a = 0.35 * (shakeT / 0.45);
+    camera.position.x += (Math.random() - 0.5) * a;
+    camera.position.y += (Math.random() - 0.5) * a;
+  }
   camera.up.set(0, 1, 0);
   camera.lookAt(look.applyMatrix4(rot));
 }
@@ -450,8 +495,38 @@ function renderHud() {
     const ev = sim.events[lastEventShown];
     const [text, kind] = EVENT_TEXT[ev.kind];
     toast(text, kind);
+    const cue = EVENT_CUE[ev.kind];
+    if (cue) audio.cue(cue);
+    if (ev.kind === 'collision') shakeT = 0.45;
+    if (ev.kind === 'cartDumped') {
+      pop(`+${t1(sim.truck - popBase)} t`);
+      popBase = sim.truck;
+    }
+  }
+  // 残り 10 秒は 1 秒ごとに時報
+  const sec = Math.ceil(rem);
+  if (started && !paused && !sim.over && sec <= 10 && sec !== lastTick) {
+    lastTick = sec;
+    audio.cue('tick');
   }
 }
+
+const EVENT_CUE: Partial<Record<GameEvent['kind'], Cue>> = {
+  tank70: 'tank70', tank90: 'tank90', full: 'full', collision: 'collision', cartArrived: 'arrived', cartDumped: 'dumped',
+  timeUp: 'timeUp', noCart: 'warn', spill: 'warn', cartNoLane: 'warn', autoStop: 'warn', cartStuck: 'warn',
+};
+/** 得点の横に「＋◯ t」を浮かべる */
+function pop(text: string) {
+  const el = $('pop');
+  el.textContent = text;
+  el.classList.remove('show');
+  void el.offsetWidth; // アニメーションをやり直す
+  el.classList.add('show');
+  clearTimeout(popTimer);
+  popTimer = window.setTimeout(() => el.classList.remove('show'), 1700);
+}
+let popTimer = 0;
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 // ---------- ガイドライン・ミニマップ（§7.1） ----------
 const minimap = new Minimap($('miniCanvas') as HTMLCanvasElement);
@@ -512,6 +587,10 @@ function showResult() {
   } else $('bestResult').textContent = '';
   ($('shareText') as HTMLInputElement).value = shareText(difficulty, mapChoice.seed, mapChoice.standard, sim.truck, sim.rank);
   resultEl.hidden = false;
+  const rk = $('resultRank');
+  rk.classList.remove('reveal');
+  void rk.offsetWidth;
+  rk.classList.add('reveal');
 }
 
 // ---------- tutorial（§7.3） ----------
@@ -632,12 +711,16 @@ function start(tut = false) {
   prevPsi = sim.combine.psi;
   started = true;
   startEl.hidden = true;
+  audio.setMuted(!options.sound);
+  audio.start(); // ブラウザの決まりで、クリックかキーのあとに鳴らし始める
 }
 function setPaused(on: boolean) {
   if (!started || sim.over) return;
   paused = on;
   pauseEl.hidden = !on;
   held.clear();
+  if (on) audio.suspend();
+  else audio.start();
 }
 function retry() {
   paused = false;
@@ -673,6 +756,7 @@ function renderSettings() {
   ($('optGuide') as HTMLInputElement).checked = options.guide;
   ($('optMouse') as HTMLInputElement).checked = options.mouseSteer;
   ($('optLow') as HTMLInputElement).checked = quality === 'low';
+  ($('optSound') as HTMLInputElement).checked = options.sound;
 }
 /** タイトル画面の操作説明（今の割り当てで） */
 function renderKeyList() {
@@ -690,7 +774,7 @@ function renderKeyList() {
     `${k('auger')}<span>排出オーガを出す／しまう（カートが横にいるときだけ流れる）</span>` +
     `${k('camera')}<span>カメラの切り替え（追従・高い追従・真上・自由）</span>` +
     `${k('guide')}<span>ガイドライン（回り刈りの次の線）の表示</span>` +
-    `<kbd>Tab</kbd><span>ミニマップの拡大</span><kbd>Esc</kbd><span>一時停止</span>`;
+    `<kbd>Tab</kbd><span>ミニマップの拡大</span><kbd>M</kbd><span>音のあり・なし</span><kbd>Esc</kbd><span>一時停止</span>`;
 }
 function openSettings() {
   renderSettings();
@@ -724,6 +808,11 @@ $('optMouse').addEventListener('change', (e) => {
   mouseSteer = null;
   saveOptions(options);
 });
+$('optSound').addEventListener('change', (e) => {
+  options.sound = (e.target as HTMLInputElement).checked;
+  saveOptions(options);
+  audio.setMuted(!options.sound);
+});
 $('optLow').addEventListener('change', (e) => {
   quality = (e.target as HTMLInputElement).checked ? 'low' : 'high';
   options.quality = quality;
@@ -732,6 +821,7 @@ $('optLow').addEventListener('change', (e) => {
 });
 renderKeyList();
 window.addEventListener('resize', () => {
+  dust.setViewport(window.innerHeight, camera.fov);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -777,6 +867,9 @@ renderer.setAnimationLoop((now) => {
   });
   syncCart();
   flowView.sync();
+  dust.update(dt * ts, sim.combine.v, sim.headerDown ? sim.harvest.feedKgS : 0);
+  audio.update({ running, speed: sim.speedKmh, load: sim.harvest.load, cutting: sim.headerDown && sim.harvest.feedKgS > 0.5, unloading: sim.unloading });
+  syncStream();
   elapsed += dt;
   const h = sim.harvest;
   fieldView!.update({ place: sim.place, knifeX: h.knifeX, knifeY: h.knifeY, headerDown: sim.headerDown, pose: sim.pose }, camera.getWorldPosition(tmpVec), elapsed);
@@ -797,6 +890,8 @@ renderer.setAnimationLoop((now) => {
   press: (code: string, on: boolean) => { if (on) { held.add(code); if (EDGE[code] !== undefined) edges |= EDGE[code]; } else held.delete(code); },
   setQuality: (q: 'high' | 'low') => { quality = q; fieldView?.setQuality(q); },
   get guide() { return guide; },
+  get audio() { return { state: audio.ctx?.state ?? 'none', muted: audio.isMuted }; },
+  get dust() { return dust.count; },
   get keymap() { return { ...keymap }; },
   /** 描かずに n 刻み進める（e2e 用。keys は毎刻みの入力） */
   fastForward: (n: number, keys = 0) => {
